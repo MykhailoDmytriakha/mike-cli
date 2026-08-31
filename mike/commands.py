@@ -359,14 +359,18 @@ def store_write_fresh(case: Path, name: str, body: str):
 
 def case_list(root: Path) -> Outcome:
     out = Outcome()
-    cases = store.all_cases(root)
+    cases, rejected0 = store.scan(root)
     if not cases:
+        for path, reason in rejected0:
+            out.warn(f"not a case, ignored: {path.relative_to(root)} — {reason}")
         out.say("no cases yet — `mike case new <name> --goal \"…\"`")
         return out
     try:
         current = store.hand(root)
     except StoreError:
         current = None
+    for path, reason in store.scan(root)[1]:
+        out.warn(f"not a case, ignored: {path.relative_to(root)} — {reason}")
     for case in cases:
         depth = len(store.chain(case, root)) - 1
         todo = grammar.parse_todo(store.read(case, "TODO.md"))
@@ -482,13 +486,15 @@ def entry(root: Path, case: Path) -> Outcome:
 
 def check(root: Path) -> Outcome:
     out = Outcome()
-    cases = store.all_cases(root)
+    cases, rejected = store.scan(root)
+    for path, reason in rejected:
+        out.warn(f"not a case, ignored: {path.relative_to(root)} — {reason}")
     errors = 0
     log_lines = []
     date, time = _now()
     for case in cases:
         for name, parse in (("README.md", grammar.parse_readme), ("TODO.md", grammar.parse_todo), ("JOURNAL.md", grammar.parse_journal)):
-            p = case / name
+            p = store.file_path(case, name)
             if not p.exists():
                 out.say(f"x {case.name}/{name}: missing (L3)")
                 errors += 1

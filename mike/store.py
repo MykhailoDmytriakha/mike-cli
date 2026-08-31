@@ -15,7 +15,23 @@ from . import grammar, recover, stamp
 
 CASES_DIR = ".cases"
 FILES = ("README.md", "TODO.md", "JOURNAL.md")
-CASE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+){1,4}$")  # L2: date + 2–5 words
+# L2 naming policy: a case dir is `YYYY-MM-DD-<slug>`. Detection is case-INsensitive and imposes no
+# word count: the invariant is the date prefix plus a non-empty portable slug (letters, digits,
+# hyphens). `case new` normalizes NEW names to lowercase; existing dirs are never renamed.
+DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-")
+CASE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$")
+
+
+def reject_reason(name: str):
+    """Why a directory name is not a case name — None when it is one (used for diagnostics)."""
+    if CASE_NAME_RE.match(name):
+        return None
+    if not DATE_PREFIX_RE.match(name):
+        return "no YYYY-MM-DD- date prefix"
+    rest = name[11:]
+    if not rest:
+        return "empty name after the date"
+    return f"invalid characters in `{rest}` — allowed: letters, digits, hyphen-separated words"
 
 
 class StoreError(Exception):
@@ -49,22 +65,59 @@ def is_case_dir(p: Path) -> bool:
     return p.is_dir() and CASE_NAME_RE.match(p.name) is not None
 
 
-def all_cases(root: Path) -> List[Path]:
-    """Every case folder under root, nested ones included, sorted by path."""
-    found: List[Path] = []
+def scan(root: Path):
+    """Every case folder under root plus the case-LIKE directories that were rejected, with reasons.
 
-    def walk(d: Path):
+    Rejected means: at the root level — any visible directory that is not a valid case name; inside
+    a case — a directory with a date prefix but an invalid tail (content folders like `docs/` are
+    not case-like and are not reported). Nothing is ever silently ignored (bug report 2026-08-31).
+    """
+    found: List[Path] = []
+    rejected: List[tuple] = []
+
+    def walk(d: Path, top: bool):
         for child in sorted(d.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
             if is_case_dir(child):
                 found.append(child)
-                walk(child)
+                walk(child, False)
+            elif top or DATE_PREFIX_RE.match(child.name):
+                rejected.append((child, reject_reason(child.name)))
 
-    walk(root)
-    return found
+    walk(root, True)
+    return found, rejected
+
+
+def all_cases(root: Path) -> List[Path]:
+    return scan(root)[0]
+
+
+def file_path(case: Path, name: str) -> Path:
+    """The single resolver for the three case files: canonical name first, any-case legacy second.
+
+    Legacy cases may hold `todo.md` / `journal.md`; those are read and written in place, never
+    renamed. When the file does not exist at all, the canonical path is returned for creation.
+    """
+    # Real stored names via iterdir, not `.exists()`: on case-insensitive filesystems (macOS APFS)
+    # `(case / "JOURNAL.md").exists()` is true for `journal.md` too, and writing through the
+    # canonical spelling would silently rename the user's file.
+    if case.is_dir():
+        insensitive = None
+        for child in case.iterdir():
+            if not child.is_file():
+                continue
+            if child.name == name:
+                return child
+            if child.name.lower() == name.lower():
+                insensitive = child
+        if insensitive is not None:
+            return insensitive
+    return case / name
 
 
 def read(case: Path, name: str) -> str:
-    p = case / name
+    p = file_path(case, name)
     if not p.exists():
         raise StoreError(f"{p} is missing (L3)", 4)
     return p.read_text(encoding="utf-8")
@@ -93,10 +146,10 @@ def load(case: Path, name: str):
 def resolve_case(root: Path, name: Optional[str]) -> Path:
     """Find a case by name (exact folder name, nested allowed) or by unique suffix."""
     cases = all_cases(root)
-    exact = [c for c in cases if c.name == name]
+    exact = [c for c in cases if c.name == name] or [c for c in cases if name and c.name.lower() == name.lower()]
     if exact:
         return exact[0]
-    partial = [c for c in cases if name and c.name.endswith(name)]
+    partial = [c for c in cases if name and c.name.lower().endswith(name.lower())]
     if len(partial) == 1:
         return partial[0]
     if len(partial) > 1:
@@ -112,7 +165,11 @@ def hand(root: Path, explicit: Optional[str] = None) -> Path:
     open_cases = [c for c in all_cases(root) if is_open(c)]
     if not open_cases:
         raise StoreError("no open case — `mike case new <name>` to start one", 4)
-    return max(open_cases, key=lambda c: (c / "JOURNAL.md").stat().st_mtime if (c / "JOURNAL.md").exists() else 0)
+    def freshness(c: Path):
+        j = file_path(c, "JOURNAL.md")
+        return j.stat().st_mtime if j.exists() else 0
+
+    return max(open_cases, key=freshness)
 
 
 def chain(case: Path, root: Path) -> List[str]:
@@ -135,7 +192,7 @@ def _atomic_write(path: Path, text: str):
 
 def check_stamp(case: Path, name: str) -> WriteReport:
     """S3/S4: verify the stamp before writing. Mismatch → rebuild by grammar, move the rest out."""
-    path = case / name
+    path = file_path(case, name)
     report = WriteReport(path)
     text = read(case, name)
     ok, state = stamp.verify(text)
@@ -148,7 +205,7 @@ def check_stamp(case: Path, name: str) -> WriteReport:
         raise StoreError(f"{name}: stamp {state} and the file cannot be rebuilt — {details}", 3)
     _atomic_write(path, rebuilt)
     if removed:
-        rec = case / f"{name}.recover.md"
+        rec = case / f"{path.name}.recover.md"
         rec.write_text("\n".join(removed) + "\n", encoding="utf-8")
         report.recovered, report.recovered_lines = rec, len(removed)
     return report
@@ -162,7 +219,7 @@ def write(case: Path, name: str, body: str) -> WriteReport:
         details = "\n".join(f"  {f}" for f in result.errors)
         raise StoreError(f"{name}: refused, {len(result.errors)} rule violation(s):\n{details}", 3)
     report.warnings = result.warnings
-    _atomic_write(case / name, stamp.apply(body))
+    _atomic_write(file_path(case, name), stamp.apply(body))
     return report
 
 
