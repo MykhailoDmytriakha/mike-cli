@@ -120,16 +120,51 @@ def _sync_progress(case: Path, todo: grammar.Todo, out: Outcome):
 
 
 # ---- journal ------------------------------------------------------------------------------------
+BODY_WRAP = 160
+
+
+def _render_event(typ: str, text: str):
+    """Turn text into journal lines: `  TYPE · headline` + up to 5 wrapped body lines (F7).
+
+    A long text is split at word boundaries instead of being refused — the limit shapes the
+    record, it must not block the write (live feedback 2026-08-31).
+    """
+    text = " ".join(text.split())
+    head_budget = grammar.EVENT_CHARS - len(typ) - 3
+    if len(text) <= head_budget:
+        return [f"  {typ} · {text}"], False
+    words = text.split(" ")
+    head, i = "", 0
+    while i < len(words) and len(head) + len(words[i]) + 1 <= head_budget - 2:
+        head += (" " if head else "") + words[i]
+        i += 1
+    if not head:  # a single word longer than the whole headline — hard cut
+        head, words[0] = words[0][: head_budget - 2], words[0][head_budget - 2:]
+        i = 0
+    rest, body = " ".join(words[i:]), []
+    while rest and len(body) < grammar.EVENT_BODY_LINES:
+        if len(rest) <= BODY_WRAP:
+            body.append(rest)
+            rest = ""
+        else:
+            cut = rest.rfind(" ", 0, BODY_WRAP)
+            cut = cut if cut > 0 else BODY_WRAP
+            body.append(rest[:cut])
+            rest = rest[cut:].strip()
+    if rest:
+        raise StoreError(f"event text is too long even for a headline plus {grammar.EVENT_BODY_LINES} body lines (F7) — "
+                         f"put the story into the phase file and log a short line with a path", 3)
+    return [f"  {typ} · {head} …"] + [f"    {b}" for b in body], True
+
+
 def log(case: Path, typ: str, text: str, phase: Optional[str] = None) -> Outcome:
     out = Outcome()
     typ = typ.upper()
     if typ not in grammar.JOURNAL_TYPES:
         raise StoreError(f"unknown type `{typ}` — allowed: PHASE · DECISION · PROBLEM · RESULT (F8)", 2)
-    text = " ".join(text.split())
-    event = f"  {typ} · {text}"
-    if len(event.strip()) > grammar.EVENT_CHARS:
-        raise StoreError(f"event line is {len(event.strip())} chars, limit {grammar.EVENT_CHARS} (F7): shorten the headline, "
-                         f"put details in the phase file", 3)
+    event_lines, split = _render_event(typ, text)
+    if split:
+        out.warn(f"event longer than {grammar.EVENT_CHARS} chars — split into headline + {len(event_lines) - 1} body line(s) (F7)")
     phase = phase or _phase_of(_todo(case, out))
     if not re.fullmatch(r"p\d+(\.\d+)?", phase):
         raise StoreError(f"phase must look like p3 or p4.1, got `{phase}`", 2)
@@ -143,10 +178,10 @@ def log(case: Path, typ: str, text: str, phase: Optional[str] = None) -> Outcome
         j = first + 1
         while j < len(lines) and lines[j].startswith("  "):
             j += 1
-        lines.insert(j, event)
+        lines[j:j] = event_lines
     else:
         at = first if first is not None else len(lines)
-        block = [header, event]
+        block = [header] + event_lines
         if at < len(lines) and first is not None:
             lines[at:at] = block
         else:
@@ -326,10 +361,15 @@ def _slug(name: str) -> str:
 
 
 def _case_folder(name: str) -> str:
-    date, _ = _now()
+    """`YYYY-MM-DD-<slug>`. A date already present in the name is used, not doubled (feedback 2026-08-31)."""
+    m = store.DATE_PREFIX_RE.match(name.strip())
+    if m:
+        date, name = name.strip()[:10], name.strip()[11:]
+    else:
+        date, _ = _now()
     folder = f"{date}-{_slug(name)}"
     if not store.CASE_NAME_RE.match(folder):
-        raise StoreError(f"`{folder}` is not a valid case name: 2–5 English words, hyphens (L2)", 2)
+        raise StoreError(f"`{folder}` is not a valid case name: date prefix + words of letters/digits, hyphens (L2)", 2)
     return folder
 
 
@@ -349,7 +389,8 @@ def case_new(root: Path, name: str, goal: str, parent: Optional[Path] = None) ->
     store_write_fresh(case, "README.md", readme_text)
     store_write_fresh(case, "TODO.md", f"# TODO — {title}\n")
     d, t = _now()
-    store_write_fresh(case, "JOURNAL.md", f"# JOURNAL — {title}\n\n- {d} {t} · p0\n  PHASE · дело открыто: {goal}\n")
+    event_lines, _ = _render_event("PHASE", f"дело открыто: {goal}")
+    store_write_fresh(case, "JOURNAL.md", "\n".join([f"# JOURNAL — {title}", "", f"- {d} {t} · p0", *event_lines]) + "\n")
     return case
 
 
@@ -484,9 +525,11 @@ def entry(root: Path, case: Path) -> Outcome:
     return out
 
 
-def check(root: Path) -> Outcome:
+def check(root: Path, only: Optional[Path] = None) -> Outcome:
     out = Outcome()
     cases, rejected = store.scan(root)
+    if only is not None:
+        cases = [c for c in cases if c == only or only in c.parents]
     for path, reason in rejected:
         out.warn(f"not a case, ignored: {path.relative_to(root)} — {reason}")
     errors = 0

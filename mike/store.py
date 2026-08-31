@@ -212,12 +212,34 @@ def check_stamp(case: Path, name: str) -> WriteReport:
 
 
 def write(case: Path, name: str, body: str) -> WriteReport:
-    """Validate `body` by its grammar, then write it with a fresh stamp (C8: nothing is touched on refusal)."""
+    """Validate `body` by its grammar, then write it with a fresh stamp (C8: nothing is touched on refusal).
+
+    A violation the command did NOT introduce (the broken line already sits in the current file —
+    e.g. left by an older mike version) must not deadlock every future write: the file is rebuilt,
+    the broken lines go to `<FILE>.recover.md`, the write proceeds with a warning (S4 semantics).
+    """
     report = check_stamp(case, name)
     result = recover.PARSERS[name](body)
     if result.errors:
-        details = "\n".join(f"  {f}" for f in result.errors)
-        raise StoreError(f"{name}: refused, {len(result.errors)} rule violation(s):\n{details}", 3)
+        current, _ = stamp.split(read(case, name)) if file_path(case, name).exists() else ("", None)
+        current_lines = set(current.split("\n"))
+        new_lines = body.rstrip("\n").split("\n")
+        introduced = [f for f in result.errors
+                      if f.line == 0 or f.line > len(new_lines) or new_lines[f.line - 1] not in current_lines]
+        if introduced:
+            details = "\n".join(f"  {f}" for f in introduced)
+            raise StoreError(f"{name}: refused, {len(introduced)} rule violation(s):\n{details}", 3)
+        rebuilt, removed, fatal = recover.rebuild(name, body)
+        if rebuilt is None:
+            details = "; ".join(str(f) for f in fatal)
+            raise StoreError(f"{name}: pre-existing violations and the file cannot be rebuilt — {details}", 3)
+        _atomic_write(file_path(case, name), rebuilt)
+        if removed:
+            rec = case / f"{file_path(case, name).name}.recover.md"
+            rec.write_text("\n".join(removed) + "\n", encoding="utf-8")
+            report.recovered, report.recovered_lines = rec, len(removed)
+        report.warnings = result.warnings
+        return report
     report.warnings = result.warnings
     _atomic_write(file_path(case, name), stamp.apply(body))
     return report

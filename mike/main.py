@@ -21,6 +21,7 @@ EXAMPLES = """examples
   mike spawn "db unreachable from server" --goal "server cannot reach the database, cause unknown"
   mike done "database connected and validated"
   mike check                             all cases against RULES.md; violations → exit 3
+  mike --case mle-prod check             check one case only
 options: --case <name or suffix> (or MIKE_CASE) picks the case; exit codes 0 ok · 1 error · 2 usage · 3 rule violation · 4 precondition
 """
 
@@ -91,7 +92,8 @@ def run(argv=None) -> int:
                     raise StoreError("usage: mike case use <name or unique suffix>", 2)
                 out = commands.case_use(root, args.name)
         elif args.cmd == "check":
-            out = commands.check(root)
+            only = store.resolve_case(root, args.case) if args.case else None
+            out = commands.check(root, only)
         else:
             case = store.hand(root, args.case)
             if args.cmd is None:

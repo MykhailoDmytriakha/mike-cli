@@ -68,7 +68,10 @@ class Flow(unittest.TestCase):
         code, out, err = run("log", "DECISION", "psycopg over asyncpg because the app is sync")
         self.assertEqual(code, 0, err)
         self.assertEqual(run("log", "WAIT", "nope")[0], 2)
-        self.assertEqual(run("log", "RESULT", "x" * 300)[0], 3)
+        code, out, err = run("log", "RESULT", "long result " * 30)  # long text splits, not refused
+        self.assertEqual(code, 0, err)
+        self.assertIn("split into headline", err)
+        self.assertEqual(run("log", "RESULT", "x" * 2000)[0], 3)  # too long even for headline + body
         j = grammar.parse_journal((case / "JOURNAL.md").read_text())
         self.assertTrue(j.ok, j.errors)
         self.assertEqual(j.entries[0].phase, "p1")
@@ -76,8 +79,8 @@ class Flow(unittest.TestCase):
         # close needs RESULT + reflect + align
         code, out, err = run("phase", "close", "1", "local connection works")
         self.assertEqual(code, 4)
-        self.assertIn("no RESULT", err)
         self.assertIn("reflect:", err)
+        self.assertIn("align:", err)
         run("log", "RESULT", "local connection works, 12 ms round trip")
         run("log", "DECISION", "reflect: read the driver docs before guessing flags")
         run("log", "DECISION", "align: phase 2 is the server database, not the app")
