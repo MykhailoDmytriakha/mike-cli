@@ -3,7 +3,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import __version__, commands, store
+from . import __version__, commands, knowledge, store
 from .store import StoreError
 
 EXAMPLES = """examples
@@ -20,6 +20,7 @@ EXAMPLES = """examples
   mike case use connect-database         switch the hand (like `cf target` / `oc project`)
   mike spawn "db unreachable from server" --goal "server cannot reach the database, cause unknown"
   mike done "database connected and validated"
+  mike feedback "log rejects names" --actual "..." --expected "..."   report a mike problem
   mike check                             all cases against RULES.md; violations → exit 3
   mike --case mle-prod check             check one case only
 options: --case <name or suffix> (or MIKE_CASE) picks the case; exit codes 0 ok · 1 error · 2 usage · 3 rule violation · 4 precondition
@@ -36,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("log", help="add a journal event: PHASE · DECISION · PROBLEM · RESULT", allow_abbrev=False)
     s.add_argument("type")
     s.add_argument("text")
-    s.add_argument("--phase", help="pN (default: the open phase)")
+    s.add_argument("--phase", help="p1, 1 or a unique phase name (default: the open phase); e.g. `mike log --phase p1 DECISION \"…\"`")
 
     s = sub.add_parser("todo", help="add an item or mark it done", allow_abbrev=False)
     s.add_argument("action", choices=["add", "done"])
@@ -64,8 +65,17 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("done", help="close the case in hand (all phases must be closed)", allow_abbrev=False)
     s.add_argument("summary")
 
+    s = sub.add_parser("feedback", help="report a mike problem or wish — lands in the mike-cli clone's feedback/ pool", allow_abbrev=False)
+    s.add_argument("title")
+    s.add_argument("--expected", default="")
+    s.add_argument("--actual", default="")
+    s.add_argument("--why", default="")
+    s.add_argument("--acceptance", default="")
+    s.add_argument("--repro", default="")
+
     sub.add_parser("check", help="verify every case against the rules", allow_abbrev=False)
-    sub.add_parser("help", help="show examples", allow_abbrev=False)
+    s = sub.add_parser("help", help="examples; `mike help <topic>` opens a knowledge dose", allow_abbrev=False)
+    s.add_argument("topic", nargs="?")
     return p
 
 
@@ -74,7 +84,19 @@ def run(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.cmd == "help":
+            if args.topic:
+                dose = knowledge.TOPICS.get(args.topic.lower())
+                if dose is None:
+                    print(f"mike: no topic `{args.topic}` — topics: {knowledge.topic_list()}", file=sys.stderr)
+                    return 2
+                print(dose)
+                return 0
             parser.print_help()
+            print(f"\ntopics (open at the moment of need): mike help <{knowledge.topic_list()}>")
+            return 0
+        if args.cmd == "feedback":
+            out = commands.feedback(args.title, args.expected, args.actual, args.why, args.acceptance, args.repro)
+            print("\n".join(out.lines))
             return 0
         if args.cmd == "case" and args.action == "new":
             if not args.name or not args.goal:

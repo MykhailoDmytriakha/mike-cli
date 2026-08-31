@@ -34,7 +34,7 @@ class Outcome:
         if report.recovered:
             self.warnings.append(
                 f"{report.path.name}: written bypassing mike — rebuilt by grammar, {report.recovered_lines} line(s) moved to "
-                f"{report.recovered.name}: re-enter them with mike, then delete that file (S4)")
+                f"{report.recovered.name}: re-enter them with mike, then run: rm '{report.recovered}' (S4)")
         elif report.bypassed:
             self.warnings.append(f"{report.path.name}: written bypassing mike — content was valid, stamp renewed (S4)")
 
@@ -130,9 +130,10 @@ def _render_event(typ: str, text: str):
     record, it must not block the write (live feedback 2026-08-31).
     """
     text = " ".join(text.split())
-    head_budget = grammar.EVENT_CHARS - len(typ) - 3
-    if len(text) <= head_budget:
+    if len(f"{typ} · {text}") <= grammar.EVENT_CHARS:
         return [f"  {typ} · {text}"], False
+    # split under the SOFT threshold, so a split line never triggers "close to the limit" later
+    head_budget = grammar.EVENT_WARN_CHARS - len(typ) - 3
     words = text.split(" ")
     head, i = "", 0
     while i < len(words) and len(head) + len(words[i]) + 1 <= head_budget - 2:
@@ -157,6 +158,21 @@ def _render_event(typ: str, text: str):
     return [f"  {typ} · {head} …"] + [f"    {b}" for b in body], True
 
 
+def _resolve_phase(todo: grammar.Todo, ref: str) -> str:
+    """Accept what the user sees — `p1`, `1`, `4.1` or a unique phase name — and return canonical `pN`."""
+    ref = ref.strip()
+    if re.fullmatch(r"p\d+(\.\d+)?", ref):
+        return ref
+    if re.fullmatch(r"\d+(\.\d+)?", ref):
+        return f"p{ref}"
+    named = [p for p in todo.phases if p.name.lower() == ref.lower()]
+    if len(named) == 1:
+        return f"p{named[0].n}"
+    known = " · ".join(f"p{p.n} {p.name}" for p in sorted(todo.phases, key=lambda x: x.n)) or "none yet"
+    raise StoreError(f"cannot resolve phase `{ref}` — use the canonical form, e.g. `mike log --phase p1 DECISION \"…\"`; "
+                     f"phases here: {known}", 2)
+
+
 def log(case: Path, typ: str, text: str, phase: Optional[str] = None) -> Outcome:
     out = Outcome()
     typ = typ.upper()
@@ -165,9 +181,8 @@ def log(case: Path, typ: str, text: str, phase: Optional[str] = None) -> Outcome
     event_lines, split = _render_event(typ, text)
     if split:
         out.warn(f"event longer than {grammar.EVENT_CHARS} chars — split into headline + {len(event_lines) - 1} body line(s) (F7)")
-    phase = phase or _phase_of(_todo(case, out))
-    if not re.fullmatch(r"p\d+(\.\d+)?", phase):
-        raise StoreError(f"phase must look like p3 or p4.1, got `{phase}`", 2)
+    todo = _todo(case, out)
+    phase = _resolve_phase(todo, phase) if phase else _phase_of(todo)
     date, time = _now()
     body, report = store.load(case, "JOURNAL.md")
     out.absorb(report)
@@ -496,6 +511,42 @@ def done(root: Path, case: Path, summary: str) -> Outcome:
     return out
 
 
+# ---- feedback -----------------------------------------------------------------------------------
+def feedback_dir() -> Path:
+    """Feedback pool lives in the mike-cli clone (env MIKE_FEEDBACK_DIR overrides, e.g. in tests) —
+    it travels between machines with `git pull`, like elephant's pool."""
+    import os as _os
+
+    override = _os.environ.get("MIKE_FEEDBACK_DIR")
+    return Path(override) if override else Path(__file__).resolve().parent.parent / "feedback"
+
+
+def feedback(title: str, expected: str, actual: str, why: str, acceptance: str, repro: str) -> Outcome:
+    out = Outcome()
+    title = " ".join(title.split())
+    if not title or not expected or not actual:
+        raise StoreError("feedback needs at least a title, --expected and --actual; add --repro/--why/--acceptance "
+                         "when you can", 2)
+    d, t = _now()
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or "feedback"
+    folder = feedback_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{d}-{t.replace(':', '')}-{slug}.md"
+    try:
+        case = " › ".join(store.chain(store.hand(store.find_root()), store.find_root()))
+    except StoreError:
+        case = "—"
+    from . import __version__
+    sections = [f"# {title}", "", f"date: {d} {t} · mike {__version__} · case: {case}", ""]
+    for heading, text_ in (("Reproduction", repro), ("Actual", actual), ("Expected", expected),
+                           ("Why", why), ("Acceptance", acceptance)):
+        if text_:
+            sections += [f"## {heading}", text_.strip(), ""]
+    path.write_text("\n".join(sections), encoding="utf-8")
+    out.say(f"feedback written: {path}")
+    return out
+
+
 # ---- entry and check ----------------------------------------------------------------------------
 def entry(root: Path, case: Path) -> Outcome:
     out = Outcome()
@@ -517,7 +568,7 @@ def entry(root: Path, case: Path) -> Outcome:
         out.say("\n".join(jl[1:cut]).strip("\n"), "")
     rec = store.recover_files(case)
     if rec:
-        out.warn(*(f"pending: {r.name} — re-enter its lines with mike, then delete it (S4)" for r in rec))
+        out.warn(*(f"pending: {r.name} — re-enter its lines with mike, then run: rm '{r}' (S4)" for r in rec))
     out.say("rules: .cases/RULES.md · stuck? grep -ril '<error words>' .howto/ · next command: mike help")
     total = "\n".join(out.lines)
     if len(total) > MAX_SCREEN:
