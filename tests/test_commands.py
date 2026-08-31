@@ -174,3 +174,51 @@ class Flow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CaseContext(unittest.TestCase):
+    """`mike case list` and `mike case use` — the hand as a switchable context, no state file."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old = os.getcwd()
+        os.chdir(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve() / ".cases"
+        os.environ.pop("MIKE_CASE", None)
+        run("case", "new", "first case", "--goal", "g1")
+        run("case", "new", "second case", "--goal", "g2")
+
+    def tearDown(self):
+        os.chdir(self.old)
+        self.tmp.cleanup()
+
+    def test_hand_follows_last_touched_and_use_switches(self):
+        code, out, _ = run()
+        self.assertIn("second-case", out.splitlines()[0])
+        self.assertIn("other open cases:", out)
+        code, out, err = run("case", "use", "first-case")
+        self.assertEqual(code, 0, err)
+        code, out, _ = run()
+        self.assertIn("first-case", out.splitlines()[0])
+
+    def test_list_marks_current_and_shows_state(self):
+        run("case", "use", "first-case")
+        code, out, err = run("case", "list")
+        self.assertEqual(code, 0, err)
+        first = next(l for l in out.splitlines() if "first-case" in l)
+        second = next(l for l in out.splitlines() if "second-case" in l)
+        self.assertTrue(first.startswith("*"), first)
+        self.assertTrue(second.startswith(" "), second)
+        self.assertIn("phases 0/0", first)
+        self.assertFalse((self.root / ".current").exists(), "no state file anywhere")
+
+    def test_use_closed_case_refused(self):
+        run("case", "use", "first-case")
+        run("done", "closed early")
+        code, out, err = run("case", "use", "first-case")
+        self.assertEqual(code, 4)
+        self.assertIn("closed", err)
+
+    def test_use_unknown_case(self):
+        self.assertEqual(run("case", "use", "no-such")[0], 4)
+        self.assertEqual(run("case", "use")[0], 2)

@@ -16,6 +16,8 @@ EXAMPLES = """examples
   mike phase close 3 "parsers, stamp and commands work, 55 tests"
   mike readme --file README.md           validate and write a README (progress line kept in sync)
   mike case new "connect database" --goal "app talks to the prod database"
+  mike case list                         all cases, current marked *
+  mike case use connect-database         switch the hand (like `cf target` / `oc project`)
   mike spawn "db unreachable from server" --goal "server cannot reach the database, cause unknown"
   mike done "database connected and validated"
   mike check                             all cases against RULES.md; violations → exit 3
@@ -49,10 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("readme", help="validate and write README.md from --file or stdin", allow_abbrev=False)
     s.add_argument("--file", default="-")
 
-    s = sub.add_parser("case", help="case new <name> --goal …", allow_abbrev=False)
-    s.add_argument("action", choices=["new"])
-    s.add_argument("name")
-    s.add_argument("--goal", required=True)
+    s = sub.add_parser("case", help="case new <name> --goal … · case list · case use <name>", allow_abbrev=False)
+    s.add_argument("action", choices=["new", "list", "use"])
+    s.add_argument("name", nargs="?")
+    s.add_argument("--goal")
 
     s = sub.add_parser("spawn", help="open a nested case inside the case in hand (P11)", allow_abbrev=False)
     s.add_argument("name")
@@ -73,13 +75,22 @@ def run(argv=None) -> int:
         if args.cmd == "help":
             parser.print_help()
             return 0
-        if args.cmd == "case":
+        if args.cmd == "case" and args.action == "new":
+            if not args.name or not args.goal:
+                raise StoreError("usage: mike case new <name> --goal \"one line\"", 2)
             root = _root_or_create()
             case = commands.case_new(root, args.name, args.goal)
             print(f"created: {case.relative_to(root.parent)} — now `mike phase open 1 <Name> --goal \"…\"`")
             return 0
         root = store.find_root()
-        if args.cmd == "check":
+        if args.cmd == "case":
+            if args.action == "list":
+                out = commands.case_list(root)
+            else:
+                if not args.name:
+                    raise StoreError("usage: mike case use <name or unique suffix>", 2)
+                out = commands.case_use(root, args.name)
+        elif args.cmd == "check":
             out = commands.check(root)
         else:
             case = store.hand(root, args.case)

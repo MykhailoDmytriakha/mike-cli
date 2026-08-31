@@ -357,6 +357,45 @@ def store_write_fresh(case: Path, name: str, body: str):
     (case / name).write_text(stamp.apply(body), encoding="utf-8")
 
 
+def case_list(root: Path) -> Outcome:
+    out = Outcome()
+    cases = store.all_cases(root)
+    if not cases:
+        out.say("no cases yet — `mike case new <name> --goal \"…\"`")
+        return out
+    try:
+        current = store.hand(root)
+    except StoreError:
+        current = None
+    for case in cases:
+        depth = len(store.chain(case, root)) - 1
+        todo = grammar.parse_todo(store.read(case, "TODO.md"))
+        done_n, total = sum(p.done for p in todo.phases), len(todo.phases)
+        cur = todo.current()
+        waits = [w for p in todo.phases for w in p.waits]
+        state = "closed" if not store.is_open(case) else (f"phase {cur.n} {cur.name}" if cur else "no open phase")
+        mark = "*" if case == current else " "
+        bits = [f"phases {done_n}/{total}", state]
+        if waits:
+            bits.append("waits: " + ", ".join(waits))
+        out.say(f"{mark} {'  ' * depth}{case.name} — {' · '.join(bits)}")
+    out.say("", "current is marked *; switch: `mike case use <name>`")
+    return out
+
+
+def case_use(root: Path, name: str) -> Outcome:
+    """Switch the hand like `cf target`: bump the target's JOURNAL.md mtime — no state file, no content change."""
+    import os as _os
+
+    out = Outcome()
+    case = store.resolve_case(root, name)
+    if not store.is_open(case):
+        raise StoreError(f"{case.name} is closed — the hand only holds open cases", 4)
+    _os.utime(case / "JOURNAL.md")
+    out.say(f"current case: {' › '.join(store.chain(case, root))}")
+    return out
+
+
 def spawn(root: Path, parent: Path, name: str, goal: str) -> Outcome:
     out = Outcome()
     todo = _todo(parent, out)
@@ -417,6 +456,9 @@ def entry(root: Path, case: Path) -> Outcome:
     out = Outcome()
     names = store.chain(case, root)
     out.say(f"mike · case in hand: {' › '.join(names)}", "")
+    others = [c.name for c in store.all_cases(root) if store.is_open(c) and c != case]
+    if others:
+        out.say("other open cases: " + " · ".join(others) + " — switch: `mike case use <name>`", "")
     readme_body, _ = stamp.split(store.read(case, "README.md"))
     out.say(readme_body.rstrip("\n"), "")
     todo_body, _ = stamp.split(store.read(case, "TODO.md"))
