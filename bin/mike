@@ -1,0 +1,5 @@
+#!/bin/sh
+# mike — the write door for .cases/ (see .cases/RULES.md).
+# Resolves symlinks so a link like ~/.local/bin/mike finds the clone this script lives in.
+SELF="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$0")"
+exec python3 "$(dirname "$SELF")/../mike.py" "$@"
