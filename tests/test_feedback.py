@@ -196,3 +196,37 @@ class ErrorUX(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("mike doctor", out)
         self.assertIn("AGENTS.md", out)
+
+
+class CaseRootHygiene(unittest.TestCase):
+    """L3/L4 enforced: only the three files live in the case root, the rest goes into folders."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old = os.getcwd()
+        os.chdir(self.tmp.name)
+        os.environ.pop("MIKE_CASE", None)
+        run("case", "new", "demo case", "--goal", "g")
+        self.case = next(p for p in (Path(self.tmp.name) / ".cases").iterdir() if p.is_dir())
+
+    def tearDown(self):
+        os.chdir(self.old)
+        self.tmp.cleanup()
+
+    def test_stray_file_is_a_violation_with_a_hint(self):
+        (self.case / "notes.md").write_text("stray\n")
+        code, out, err = run("check")
+        self.assertEqual(code, 3)
+        self.assertIn("L4 · extra file in the case root: notes.md", err + out)
+        self.assertIn("folder by kind", err + out)
+        code, out, err = run("doctor")
+        self.assertEqual(code, 0)
+        self.assertIn("extra file in the case root: notes.md", out)
+
+    def test_three_files_recover_and_folders_are_fine(self):
+        (self.case / "TODO.md").rename(self.case / "todo.md")  # legacy spelling counts as the three
+        (self.case / "JOURNAL.md.recover.md").write_text("x\n")
+        (self.case / "docs").mkdir()
+        (self.case / "docs" / "anything.md").write_text("ok\n")
+        code, out, err = run("check")
+        self.assertEqual(code, 0, err + out)

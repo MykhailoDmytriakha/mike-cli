@@ -203,7 +203,13 @@ def log(case: Path, typ: str, text: str, phase: Optional[str] = None) -> Outcome
             if lines and lines[-1] != "":
                 lines.append("")
             lines.extend(block)
-    out.absorb(store.write(case, "JOURNAL.md", "\n".join(lines) + "\n"))
+    report = store.write(case, "JOURNAL.md", "\n".join(lines) + "\n")
+    inserted = set()
+    for idx, ln in enumerate(lines, start=1):
+        if ln == header or ln in event_lines:
+            inserted.add(idx)
+    report.warnings = [w for w in report.warnings if w.line == 0 or w.line in inserted]
+    out.absorb(report)
     out.say(f"logged: {typ} → JOURNAL.md ({header[2:]})")
     return out
 
@@ -220,6 +226,11 @@ def _journal(case: Path, out: Optional[Outcome] = None) -> grammar.Journal:
     if j.errors:
         raise StoreError("JOURNAL.md is not parsable — run `mike check`", 3)
     return j
+
+
+def _trim_suggestion(text: str, limit: int) -> str:
+    cut = text.rfind(" ", 0, limit)
+    return text[: cut if cut > limit // 2 else limit].rstrip()
 
 
 # ---- todo ---------------------------------------------------------------------------------------
@@ -254,11 +265,70 @@ def todo_add(case: Path, ref: str, text: str) -> Outcome:
         raise StoreError(f"phase {ref} is missing or closed", 4)
     text = " ".join(text.split())
     if len(text) > grammar.TODO_ITEM_CHARS:
-        raise StoreError(f"item text is {len(text)} chars, limit {grammar.TODO_ITEM_CHARS} (F13)", 3)
+        raise StoreError(f"item text is {len(text)} chars, limit {grammar.TODO_ITEM_CHARS} (F13)\n"
+                         f"  suggestion: \"{_trim_suggestion(text, grammar.TODO_ITEM_CHARS)}\"", 3)
     m = max((it.m for it in phase.items), default=0) + 1
     phase.items.append(grammar.Item(phase.n, m, False, text, 0))
     out.absorb(store.write(case, "TODO.md", render_todo(todo)))
     out.say(f"added: {phase.n}.{m} {text} → TODO.md")
+    return out
+
+
+def _find_item(todo: grammar.Todo, ref: str):
+    m = re.fullmatch(r"(\d+)\.(\d+)", ref)
+    if not m:
+        raise StoreError(f"`{ref}` — use N.M, e.g. 2.3", 2)
+    phase = todo.phase(int(m.group(1)))
+    item = next((it for it in phase.items if it.m == int(m.group(2))), None) if phase else None
+    if item is None:
+        raise StoreError(f"no item {ref} in TODO.md", 4)
+    if phase.done:
+        raise StoreError(f"phase {phase.n} is closed — its items live in the phase file now", 4)
+    return phase, item
+
+
+def todo_edit(case: Path, ref: str, text: str) -> Outcome:
+    out = Outcome()
+    todo = _todo(case, out)
+    phase, item = _find_item(todo, ref)
+    text = " ".join(text.split())
+    if len(text) > grammar.TODO_ITEM_CHARS:
+        raise StoreError(f"item text is {len(text)} chars, limit {grammar.TODO_ITEM_CHARS} (F13)\n"
+                         f"  suggestion: \"{_trim_suggestion(text, grammar.TODO_ITEM_CHARS)}\"", 3)
+    old_text, item.text = item.text, text
+    out.absorb(store.write(case, "TODO.md", render_todo(todo)))
+    out.lines += log(case, "DECISION", f"todo {ref}: «{old_text}» → «{text}»", f"p{phase.n}").lines
+    out.say(f"edited: {ref} → TODO.md (old text kept in the journal)")
+    return out
+
+
+def todo_move(case: Path, ref: str, to: str) -> Outcome:
+    out = Outcome()
+    todo = _todo(case, out)
+    phase, item = _find_item(todo, ref)
+    m = re.fullmatch(r"(\d+)\.(\d+)", to)
+    if not m or int(m.group(1)) != phase.n:
+        raise StoreError(f"move works inside one phase: `mike todo move {phase.n}.M {phase.n}.K`; "
+                         f"to another phase — drop and add", 2)
+    k = int(m.group(2))
+    phase.items.remove(item)
+    phase.items.insert(max(0, min(k - 1, len(phase.items))), item)
+    for idx, it in enumerate(phase.items, start=1):  # positions become contiguous
+        it.m = idx
+    out.absorb(store.write(case, "TODO.md", render_todo(todo)))
+    out.say(f"moved: item now at {phase.n}.{item.m}; the phase list:", *(
+        f"  - [{'x' if it.done else ' '}] {it.n}.{it.m} {it.text}" for it in phase.items))
+    return out
+
+
+def todo_drop(case: Path, ref: str) -> Outcome:
+    out = Outcome()
+    todo = _todo(case, out)
+    phase, item = _find_item(todo, ref)
+    phase.items.remove(item)
+    out.absorb(store.write(case, "TODO.md", render_todo(todo)))
+    out.lines += log(case, "DECISION", f"todo {ref} снят: «{item.text}»", f"p{phase.n}").lines
+    out.say(f"dropped: {ref} «{item.text}» → text kept in the journal")
     return out
 
 
@@ -370,6 +440,62 @@ def readme(case: Path, text: str) -> Outcome:
     return out
 
 
+SECTION_NAMES = {n.lower(): n for n in grammar.README_SECTIONS}
+
+
+def _readme_sections(case: Path, out: Outcome):
+    body = _readme_text(case, out)
+    parsed = grammar.parse_readme(body)
+    if parsed.errors:
+        raise StoreError("README.md is not parsable — run `mike check`", 3)
+    return parsed
+
+
+def _render_readme(parsed) -> str:
+    lines = [f"# {parsed.title}"]
+    for name in grammar.README_SECTIONS:
+        lines += ["", f"## {name}"] + parsed.sections.get(name, [])
+    return "\n".join(lines) + "\n"
+
+
+def readme_set(case: Path, prefix: str, text: str) -> Outcome:
+    """Replace (or create) the `- <prefix>: …` line in State — one line instead of a full rewrite."""
+    out = Outcome()
+    _readme_sections(case, out)  # ensures the file parses before we touch it
+    prefix = prefix.rstrip(":")
+    body = _set_state_line(_readme_text(case, out), f"{prefix}: ", " ".join(text.split()))
+    out.absorb(store.write(case, "README.md", body))
+    out.say(f"README State: `- {prefix}: …` set")
+    return out
+
+
+def readme_add(case: Path, section: str, line: str) -> Outcome:
+    out = Outcome()
+    name = SECTION_NAMES.get(section.lower())
+    if name is None:
+        raise StoreError(f"no section `{section}` — sections: {' · '.join(grammar.README_SECTIONS)}", 2)
+    parsed = _readme_sections(case, out)
+    parsed.sections.setdefault(name, []).append(f"- {' '.join(line.split())}")
+    out.absorb(store.write(case, "README.md", _render_readme(parsed)))
+    out.say(f"README {name}: line added")
+    return out
+
+
+def readme_drop(case: Path, section: str, k: int) -> Outcome:
+    out = Outcome()
+    name = SECTION_NAMES.get(section.lower())
+    if name is None:
+        raise StoreError(f"no section `{section}` — sections: {' · '.join(grammar.README_SECTIONS)}", 2)
+    parsed = _readme_sections(case, out)
+    bullets = [i for i, ln in enumerate(parsed.sections.get(name, [])) if ln.startswith("- ")]
+    if not 1 <= k <= len(bullets):
+        raise StoreError(f"{name} has {len(bullets)} line(s), nothing at position {k}", 4)
+    removed = parsed.sections[name].pop(bullets[k - 1])
+    out.absorb(store.write(case, "README.md", _render_readme(parsed)))
+    out.say(f"README {name}: dropped «{removed[2:]}»")
+    return out
+
+
 # ---- cases --------------------------------------------------------------------------------------
 def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -415,7 +541,8 @@ def store_write_fresh(case: Path, name: str, body: str):
 
 def case_list(root: Path) -> Outcome:
     out = Outcome()
-    cases, rejected0 = store.scan(root)
+    cases = store.all_cases(root)  # the project case first in root mode
+    rejected0 = store.scan(root)[1]
     if not cases:
         for path, reason in rejected0:
             out.warn(f"not a case, ignored: {path.relative_to(root)} — {reason}")
@@ -428,7 +555,7 @@ def case_list(root: Path) -> Outcome:
     for path, reason in store.scan(root)[1]:
         out.warn(f"not a case, ignored: {path.relative_to(root)} — {reason}")
     for case in cases:
-        depth = len(store.chain(case, root)) - 1
+        depth = max(len(store.chain(case, root)) - 1, 0)
         todo = grammar.parse_todo(store.read(case, "TODO.md"))
         done_n, total = sum(p.done for p in todo.phases), len(todo.phases)
         cur = todo.current()
@@ -456,15 +583,40 @@ def case_use(root: Path, name: str) -> Outcome:
     return out
 
 
+def project_new(root: Path, name: str, goal: str) -> Outcome:
+    """Root mode on: the project folder itself becomes the top case (its children live in .cases/)."""
+    out = Outcome()
+    project = root.parent
+    for fname in store.FILES:
+        f = store.file_path(project, fname)
+        if f.exists():
+            raise StoreError(f"{f.name} already exists in {project} — it may be your public readme or docs; "
+                             f"move its content aside first, mike will not overwrite it", 4)
+    title = name.strip()
+    goal = " ".join(goal.split())
+    store_write_fresh(project, "README.md", "\n".join([
+        f"# {title}", "", "## Context", goal, "", "## State", "- progress: (no phases yet)",
+        "- next: open phase 1 — `mike phase open 1 <Name> --goal \"…\"`", "", "## Decisions", "",
+        "## Problems", "", "## Links", ""]))
+    store_write_fresh(project, "TODO.md", f"# TODO — {title}\n")
+    d, t = _now()
+    event_lines, _ = _render_event("PHASE", f"проект открыт: {goal}")
+    store_write_fresh(project, "JOURNAL.md", "\n".join([f"# JOURNAL — {title}", "", f"- {d} {t} · p0", *event_lines]) + "\n")
+    out.say(f"root mode on: {project.name} is now the top case (README/TODO/JOURNAL in the project root); "
+            f"feature cases live in .cases/ — `mike case new \"…\" --goal \"…\"`")
+    return out
+
+
 def spawn(root: Path, parent: Path, name: str, goal: str) -> Outcome:
     out = Outcome()
     todo = _todo(parent, out)
     cur = todo.current()
     if cur is None:
         raise StoreError("parent has no open phase — spawn happens inside a phase (P11)", 4)
+    into = root if parent == store.project_case(root) else parent
     child_name = _case_folder(name)
-    if (parent / child_name).exists():
-        raise StoreError(f"{parent / child_name} already exists", 4)
+    if (into / child_name).exists():
+        raise StoreError(f"{into / child_name} already exists", 4)
     # Parent first, child last: the hand follows the freshest JOURNAL.md, so the child must be written last.
     cur.waits.append(child_name)
     out.absorb(store.write(parent, "TODO.md", render_todo(todo)))
@@ -479,7 +631,7 @@ def spawn(root: Path, parent: Path, name: str, goal: str) -> Outcome:
     lines.insert(j, f"- ждёт: {child_name}")
     out.absorb(store.write(parent, "README.md", "\n".join(lines) + "\n"))
     out.lines = log(parent, "PROBLEM", f"{goal} · open → {child_name}/").lines + out.lines
-    child = case_new(root, name, goal, parent=parent)
+    child = case_new(root, name, goal, parent=None if into == root else parent)
     out.say(f"spawned: {child.relative_to(root)} — hand moves to the child; parent waits in phase {cur.n}")
     return out
 
@@ -495,8 +647,8 @@ def done(root: Path, case: Path, summary: str) -> Outcome:
     text = _set_state_line(_readme_text(case, out), "closed: ", f"{date} · {summary}")
     out.absorb(store.write(case, "README.md", text))
     out.lines = log(case, "PHASE", f"дело закрыто → {summary}").lines + out.lines
-    parent = case.parent
-    if store.is_case_dir(parent):
+    parent = store.parent_case(case, root)
+    if parent is not None:
         ptodo = _todo(parent, out)
         for p in ptodo.phases:
             if case.name in p.waits:
@@ -543,6 +695,9 @@ def doctor() -> Outcome:
             out.say(f"  {f.name}: {note}")
         for rec in store.recover_files(case):
             out.say(f"  ! pending {rec.name} — re-enter its lines with mike, then: rm '{rec}'")
+        if case != store.project_case(store.find_root()):
+            for stray in store.stray_files(case):
+                out.say(f"  ! extra file in the case root: {stray.name} — move into a folder by kind (L4)")
     except StoreError as e:
         out.say(f"hand: — ({e})", f"  recovery: {e.recovery}")
     out.say("read-only: doctor changed nothing")
@@ -650,6 +805,21 @@ def check(root: Path, only: Optional[Path] = None) -> Outcome:
                 errors += 1
         for rec in store.recover_files(case):
             out.warn(f"{case.name}: pending {rec.name}")
+        readme_text_ = store.read(case, "README.md") if store.file_path(case, "README.md").exists() else ""
+        for folder in sorted(case.iterdir()):
+            if (not folder.is_dir() or folder.name.startswith(".") or folder.name == "phases"
+                    or store.is_case_dir(folder) or case == store.project_case(root)):
+                continue
+            if f"{folder.name}/" not in readme_text_:
+                n_files = sum(1 for f in folder.rglob("*") if f.is_file())
+                out.warn(f"{case.name}: folder {folder.name}/ ({n_files} file(s)) has no line in README Links — "
+                         f"for the owner it does not exist (L5); add: mike readme add links \"{folder.name}/ — …\"")
+        if case != store.project_case(root):
+            for stray in store.stray_files(case):
+                out.say(f"x {case.name}: L4 · extra file in the case root: {stray.name} — only README/TODO/JOURNAL live "
+                        f"there; move it into a folder by kind (docs/ research/ logs/ scripts/ …)")
+                log_lines.append(f"{date} {time} · {case.name} · {stray.name} · L4 · extra file in the case root")
+                errors += 1
     if log_lines:
         with (root / "checks.log").open("a", encoding="utf-8") as fh:
             fh.write("\n".join(log_lines) + "\n")

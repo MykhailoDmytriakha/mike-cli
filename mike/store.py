@@ -64,7 +64,8 @@ def find_root(start: Optional[Path] = None) -> Path:
         if (d / CASES_DIR).is_dir():
             return d / CASES_DIR
     raise StoreError(f"no `{CASES_DIR}/` directory found from {here} upwards", 4,
-                     recovery="cd to the project root, or start one: mike case new \"name\" --goal \"…\"")
+                     recovery="cd to the project root, or start: mike case new \"name\" --goal \"…\" — or, if THIS folder "
+                              "is the project itself: mike case new --root \"name\" --goal \"…\"")
 
 
 def is_case_dir(p: Path) -> bool:
@@ -83,7 +84,7 @@ def scan(root: Path):
 
     def walk(d: Path, top: bool):
         for child in sorted(d.iterdir()):
-            if not child.is_dir() or child.name.startswith("."):
+            if not child.is_dir() or child.name.startswith(".") or child.name in ("node_modules", "phases"):
                 continue
             if is_case_dir(child):
                 found.append(child)
@@ -95,8 +96,17 @@ def scan(root: Path):
     return found, rejected
 
 
+def project_case(root: Path):
+    """Root mode: the project folder itself is the top case when all three files live beside `.cases/`."""
+    parent = root.parent
+    if all(file_path(parent, n).exists() for n in FILES):
+        return parent
+    return None
+
+
 def all_cases(root: Path) -> List[Path]:
-    return scan(root)[0]
+    project = project_case(root)
+    return ([project] if project else []) + scan(root)[0]
 
 
 def file_path(case: Path, name: str) -> Path:
@@ -152,6 +162,9 @@ def load(case: Path, name: str):
 def resolve_case(root: Path, name: Optional[str]) -> Path:
     """Find a case by name (exact folder name, nested allowed) or by unique suffix."""
     cases = all_cases(root)
+    project = project_case(root)
+    if project is not None and name in (".", "root", project.name):
+        return project
     exact = [c for c in cases if c.name == name] or [c for c in cases if name and c.name.lower() == name.lower()]
     if exact:
         return exact[0]
@@ -179,14 +192,42 @@ def hand(root: Path, explicit: Optional[str] = None) -> Path:
     return max(open_cases, key=freshness)
 
 
+def stray_files(case: Path) -> List[Path]:
+    """Files in the case root that are not the three case files (any spelling) or *.recover.md (L3/L4)."""
+    allowed = {n.lower() for n in FILES}
+    stray = []
+    for child in sorted(case.iterdir()):
+        if not child.is_file() or child.name.startswith("."):
+            continue
+        if child.name.lower() in allowed or child.name.endswith(".recover.md"):
+            continue
+        stray.append(child)
+    return stray
+
+
 def chain(case: Path, root: Path) -> List[str]:
-    """Names from the top-level case down to `case` (for nested cases)."""
+    """Names from the top down to `case`; in root mode the project name comes first."""
+    project = project_case(root)
+    if project is not None and case == project:
+        return [project.name]
     names = []
     p = case
     while p != root and is_case_dir(p):
         names.append(p.name)
         p = p.parent
+    if project is not None:
+        names.append(project.name)
     return list(reversed(names))
+
+
+def parent_case(case: Path, root: Path):
+    """The case a nested case reports back to: its folder parent, or the project case for
+    top-level cases in root mode, or None."""
+    if is_case_dir(case.parent):
+        return case.parent
+    if case.parent == root:
+        return project_case(root)
+    return None
 
 
 # ---- writing with stamp discipline ---------------------------------------------------------------

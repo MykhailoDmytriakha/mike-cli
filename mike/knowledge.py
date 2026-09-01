@@ -56,7 +56,10 @@ PROBLEM (problem → root cause → fix) · RESULT (measurement, number, verdict
   longer than a session → `mike spawn "name" --goal "…"` — a nested case of the same shape inside
   the parent. The parent shows one `waits:` line; `mike done "outcome"` in the child writes one
   summary line back and returns the hand.
-- `mike done "outcome"` closes the case (all phases must be closed first).""",
+- `mike done "outcome"` closes the case (all phases must be closed first).
+- Root mode: `mike case new --root "my app" --goal "…"` makes the PROJECT FOLDER itself the top
+  case (README/TODO/JOURNAL in the project root; refused if a README.md already exists there).
+  Feature cases live in .cases/ as usual and report their outcome back to the project on `done`.""",
 
     "where": """what goes where
 - read / ran / edited a line            → nowhere, git holds it
@@ -81,6 +84,15 @@ PROBLEM (problem → root cause → fix) · RESULT (measurement, number, verdict
 optional: --repro "commands" --why "…" --acceptance "…"
 The artifact lands in the mike-cli clone's feedback/ pool (travels with git) and the path is
 printed. Title + --actual + --expected are required; nothing from your environment is included.""",
+    "limits": """the numbers (all enforced at write time)
+README: 200 lines / 8 KB → warning · 300 lines / 12 KB → refusal; pointer line ≤ 150 chars (warning).
+TODO: ≤ 100 lines; item text ≤ 80 chars (a refusal prints a ready trimmed suggestion);
+  phase name — English, 1–3 words; no items deeper than N.M.
+JOURNAL: event headline ≤ 200 chars (soft 180); long text splits automatically into headline +
+  up to 5 body lines of ≤ 160 chars; body beyond that → put the story in the phase file.
+Why limits exist: they keep the entry screen readable and squeeze water out — the detail belongs
+in phase files and folders, pointers belong in README.""",
+
     "errors": """exit codes and what to do
 0 — done. 1 — internal error. 2 — wrong usage (the message shows the correct form).
 3 — rule violation: the write was REFUSED, no file was touched; fix the input as the message says.
