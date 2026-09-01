@@ -145,3 +145,54 @@ class HelpTopics(unittest.TestCase):
         code, out, err = run("help", "nope")
         self.assertEqual(code, 2)
         self.assertIn("journal", err)
+
+
+class ErrorUX(unittest.TestCase):
+    """Feedback 2026-08-31 #4: structured errors, stdout mirror on entry, read-only doctor."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old = os.getcwd()
+        os.chdir(self.tmp.name)
+        os.environ.pop("MIKE_CASE", None)
+
+    def tearDown(self):
+        os.chdir(self.old)
+        self.tmp.cleanup()
+
+    def test_entry_error_is_structured_and_mirrored_to_stdout(self):
+        code, out, err = run()
+        self.assertEqual(code, 4)
+        for stream in (out, err):
+            self.assertIn("ERROR [exit 4]", stream)
+            self.assertIn("recovery: ", stream)
+            self.assertIn("mike help errors", stream)
+
+    def test_non_entry_error_stays_on_stderr(self):
+        code, out, err = run("case", "list")
+        self.assertEqual(code, 4)
+        self.assertIn("ERROR [exit 4]", err)
+        self.assertEqual(out, "")
+
+    def test_doctor_without_root_and_with_root_never_writes(self):
+        code, out, err = run("doctor")
+        self.assertEqual(code, 0, err)
+        self.assertIn("root: NOT FOUND", out)
+        run("case", "new", "demo case", "--goal", "g")
+        case = next(p for p in (Path(self.tmp.name) / ".cases").iterdir() if p.is_dir())
+        j = case / "JOURNAL.md"
+        j.write_text(j.read_text() + "appended by hand\n")
+        before = {p.name: p.read_text() for p in case.iterdir() if p.is_file()}
+        code, out, err = run("doctor")
+        self.assertEqual(code, 0, err)
+        self.assertIn("stamp NOT LAST", out)
+        self.assertIn("doctor changed nothing", out)
+        after = {p.name: p.read_text() for p in case.iterdir() if p.is_file()}
+        self.assertEqual(before, after, "doctor must not rebuild or write anything")
+        self.assertFalse((case / "JOURNAL.md.recover.md").exists())
+
+    def test_errors_topic_exists(self):
+        code, out, err = run("help", "errors")
+        self.assertEqual(code, 0)
+        self.assertIn("mike doctor", out)
+        self.assertIn("AGENTS.md", out)

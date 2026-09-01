@@ -22,6 +22,7 @@ EXAMPLES = """examples
   mike done "database connected and validated"
   mike feedback "log rejects names" --actual "..." --expected "..."   report a mike problem
   mike check                             all cases against RULES.md; violations → exit 3
+  mike doctor                            read-only diagnostics, changes nothing
   mike --case mle-prod check             check one case only
 options: --case <name or suffix> (or MIKE_CASE) picks the case; exit codes 0 ok · 1 error · 2 usage · 3 rule violation · 4 precondition
 """
@@ -74,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--repro", default="")
 
     sub.add_parser("check", help="verify every case against the rules", allow_abbrev=False)
+    sub.add_parser("doctor", help="read-only diagnostics: what mike sees from here; changes nothing", allow_abbrev=False)
     s = sub.add_parser("help", help="examples; `mike help <topic>` opens a knowledge dose", allow_abbrev=False)
     s.add_argument("topic", nargs="?")
     return p
@@ -96,6 +98,10 @@ def run(argv=None) -> int:
             return 0
         if args.cmd == "feedback":
             out = commands.feedback(args.title, args.expected, args.actual, args.why, args.acceptance, args.repro)
+            print("\n".join(out.lines))
+            return 0
+        if args.cmd == "doctor":
+            out = commands.doctor()
             print("\n".join(out.lines))
             return 0
         if args.cmd == "case" and args.action == "new":
@@ -148,7 +154,13 @@ def run(argv=None) -> int:
         print("\n".join(out.lines))
         return 0
     except StoreError as e:
-        print(f"mike: {e}", file=sys.stderr)
+        lines = [f"mike: ERROR [exit {e.code}] {e}"]
+        if e.recovery:
+            lines.append(f"  recovery: {e.recovery}")
+        lines.append(f"  exit {e.code} = {store.EXIT_MEANING.get(e.code, '?')} — `mike help errors`")
+        print("\n".join(lines), file=sys.stderr)
+        if args.cmd is None:  # the entry command must explain itself on stdout too (feedback #4)
+            print("\n".join(lines))
         return e.code
 
 

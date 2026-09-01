@@ -34,12 +34,17 @@ def reject_reason(name: str):
     return f"invalid characters in `{rest}` — allowed: letters, digits, hyphen-separated words"
 
 
-class StoreError(Exception):
-    """A refusal: message for the agent and the exit code that names the class of failure (C5)."""
+EXIT_MEANING = {1: "internal error", 2: "wrong usage", 3: "rule violation, nothing was written",
+                4: "precondition not met, nothing was written"}
 
-    def __init__(self, message: str, code: int = 1):
+
+class StoreError(Exception):
+    """A refusal: message, exit code naming the failure class (C5), and a safe recovery command."""
+
+    def __init__(self, message: str, code: int = 1, recovery: str = ""):
         super().__init__(message)
         self.code = code
+        self.recovery = recovery
 
 
 @dataclass
@@ -58,7 +63,8 @@ def find_root(start: Optional[Path] = None) -> Path:
     for d in [here, *here.parents]:
         if (d / CASES_DIR).is_dir():
             return d / CASES_DIR
-    raise StoreError(f"no `{CASES_DIR}/` found from {here} upwards — run `mike case new <name>` in the project root", 4)
+    raise StoreError(f"no `{CASES_DIR}/` directory found from {here} upwards", 4,
+                     recovery="cd to the project root, or start one: mike case new \"name\" --goal \"…\"")
 
 
 def is_case_dir(p: Path) -> bool:
@@ -119,7 +125,7 @@ def file_path(case: Path, name: str) -> Path:
 def read(case: Path, name: str) -> str:
     p = file_path(case, name)
     if not p.exists():
-        raise StoreError(f"{p} is missing (L3)", 4)
+        raise StoreError(f"{p} is missing (L3)", 4, recovery="mike doctor")
     return p.read_text(encoding="utf-8")
 
 
@@ -154,7 +160,7 @@ def resolve_case(root: Path, name: Optional[str]) -> Path:
         return partial[0]
     if len(partial) > 1:
         raise StoreError(f"`{name}` matches several cases: {', '.join(c.name for c in partial)}", 2)
-    raise StoreError(f"no case named `{name}` under {root}", 4)
+    raise StoreError(f"no case named `{name}` under {root}", 4, recovery="mike case list")
 
 
 def hand(root: Path, explicit: Optional[str] = None) -> Path:
@@ -164,7 +170,8 @@ def hand(root: Path, explicit: Optional[str] = None) -> Path:
         return resolve_case(root, name)
     open_cases = [c for c in all_cases(root) if is_open(c)]
     if not open_cases:
-        raise StoreError("no open case — `mike case new <name>` to start one", 4)
+        raise StoreError("every case here is closed — nothing to pick up", 4,
+                         recovery="mike case list · mike case new \"name\" --goal \"…\"")
     def freshness(c: Path):
         j = file_path(c, "JOURNAL.md")
         return j.stat().st_mtime if j.exists() else 0

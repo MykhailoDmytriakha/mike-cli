@@ -511,6 +511,44 @@ def done(root: Path, case: Path, summary: str) -> Outcome:
     return out
 
 
+# ---- doctor -------------------------------------------------------------------------------------
+def doctor() -> Outcome:
+    """Read-only diagnostics: what mike sees from here. Never writes, never rebuilds (feedback #4)."""
+    from . import __version__
+
+    out = Outcome()
+    out.say(f"mike {__version__} · python OK · cwd: {Path.cwd()} (mike never changes your cwd)")
+    try:
+        root = store.find_root()
+    except StoreError as e:
+        out.say(f"root: NOT FOUND — {e}", f"  recovery: {e.recovery}")
+        return out
+    out.say(f"root: {root}")
+    cases, rejected = store.scan(root)
+    out.say(f"cases: {len(cases)} ({sum(store.is_open(c) for c in cases)} open)")
+    for path, reason in rejected:
+        out.say(f"  ! not a case, ignored: {path.relative_to(root)} — {reason}")
+    try:
+        case = store.hand(root)
+        out.say(f"hand: {' › '.join(store.chain(case, root))}")
+        for name in store.FILES:
+            f = store.file_path(case, name)
+            if not f.exists():
+                out.say(f"  ! {name}: MISSING (L3)")
+                continue
+            _, state = stamp.verify(f.read_text(encoding="utf-8"))
+            note = {"ok": "stamp ok", "missing": "no stamp yet (set on first mike write)",
+                    "mismatch": "stamp MISMATCH — edited bypassing mike; next mike write will rebuild (S4)",
+                    "not-last": "stamp NOT LAST — something appended after it; next mike write will rebuild (S4)"}[state]
+            out.say(f"  {f.name}: {note}")
+        for rec in store.recover_files(case):
+            out.say(f"  ! pending {rec.name} — re-enter its lines with mike, then: rm '{rec}'")
+    except StoreError as e:
+        out.say(f"hand: — ({e})", f"  recovery: {e.recovery}")
+    out.say("read-only: doctor changed nothing")
+    return out
+
+
 # ---- feedback -----------------------------------------------------------------------------------
 def feedback_dir() -> Path:
     """Feedback pool lives in the mike-cli clone (env MIKE_FEEDBACK_DIR overrides, e.g. in tests) —

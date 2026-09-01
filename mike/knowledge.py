@@ -81,6 +81,15 @@ PROBLEM (problem → root cause → fix) · RESULT (measurement, number, verdict
 optional: --repro "commands" --why "…" --acceptance "…"
 The artifact lands in the mike-cli clone's feedback/ pool (travels with git) and the path is
 printed. Title + --actual + --expected are required; nothing from your environment is included.""",
+    "errors": """exit codes and what to do
+0 — done. 1 — internal error. 2 — wrong usage (the message shows the correct form).
+3 — rule violation: the write was REFUSED, no file was touched; fix the input as the message says.
+4 — precondition not met: no .cases/ from here upwards · every case closed · a case file missing ·
+    a phase not ready to open/close. The message names the check and a recovery command.
+Diagnostics without any writes: `mike doctor`. Facts that save an investigation:
+- mike never reads or writes AGENTS.md / CLAUDE.md — they only point at mike;
+- mike never changes your shell's cwd (a child process cannot);
+- errors go to stderr; the bare `mike` entry also mirrors them to stdout.""",
 }
 
 
