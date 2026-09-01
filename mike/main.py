@@ -12,6 +12,7 @@ EXAMPLES = """examples
   mike log RESULT "p95 dropped 120 → 48 ms"
   mike todo add 3 "write the parser"      mike todo done 3.1
   mike todo edit 3.1 "new text" · mike todo move 3.7 3.2 · mike todo drop 3.4
+  mike todo hold 3.2 "ждём ответа совета" · mike todo resume 3.2
   mike readme set next "call the pastor" · mike readme add links "docs/contacts.md — кто есть кто"
   mike phase open 3 "CLI core" --goal "single write door with tests"
   mike log DECISION "reflect: …"  ·  mike log DECISION "align: …"   (both before closing)
@@ -44,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--phase", help="p1, 1 or a unique phase name (default: the open phase); e.g. `mike log --phase p1 DECISION \"…\"`")
 
     s = sub.add_parser("todo", help="add · done · edit · move · drop items", allow_abbrev=False)
-    s.add_argument("action", choices=["add", "done", "edit", "move", "drop"])
+    s.add_argument("action", choices=["add", "done", "edit", "move", "drop", "hold", "resume"])
     s.add_argument("ref", help="phase number for add (N), item for the rest (N.M)")
     s.add_argument("text", nargs="?", default="", help="text for add/edit, target position N.K for move")
 
@@ -152,6 +153,10 @@ def run(argv=None) -> int:
                     if not args.text:
                         raise StoreError("usage: mike todo move N.M N.K", 2)
                     out = commands.todo_move(case, args.ref, args.text)
+                elif args.action == "hold":
+                    out = commands.todo_hold(case, args.ref, args.text)
+                elif args.action == "resume":
+                    out = commands.todo_resume(case, args.ref)
                 else:
                     out = commands.todo_drop(case, args.ref)
             elif args.cmd == "phase":

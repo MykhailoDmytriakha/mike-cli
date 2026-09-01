@@ -110,3 +110,87 @@ class Hints(Base):
             code, out, err = run()
             self.assertIn("--root", err + out)
             os.chdir(self.tmp.name)
+
+
+class RootCaseCheck(unittest.TestCase):
+    """Feedback 2026-09-01 #1: check must verify the project case in root mode; zero is not green."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old = os.getcwd()
+        os.chdir(self.tmp.name)
+        os.environ.pop("MIKE_CASE", None)
+
+    def tearDown(self):
+        os.chdir(self.old)
+        self.tmp.cleanup()
+
+    def test_root_case_violations_are_caught(self):
+        run("case", "new", "--root", "bible truck", "--goal", "g")
+        t = Path("TODO.md")
+        t.write_text(t.read_text().replace("# TODO — bible truck",
+                     "# TODO — bible truck\n\n- [ ] 2 Calls\n  - [ ] 2.1 " + "и" * 174))
+        code, out, err = run("check")
+        self.assertEqual(code, 3, "root-case violation must fail check")
+        self.assertIn("F13", err + out)
+        self.assertIn("stamp mismatch", err, "stamp mismatch from the hand edit is reported too")
+
+    def test_zero_cases_is_not_a_green_light(self):
+        (Path(self.tmp.name) / ".cases").mkdir()
+        code, out, err = run("check")
+        self.assertEqual(code, 0)
+        self.assertIn("NOTHING WAS CHECKED", out)
+        self.assertNotIn("violations: 0", out)
+
+
+class MoveJournaling(Base):
+    def test_move_logs_renumbering_with_text_anchor(self):
+        for t in ("первый", "второй", "третий"):
+            run("todo", "add", "1", t)
+        run("todo", "move", "1.3", "1.1")
+        j = (self.case / "JOURNAL.md").read_text()
+        self.assertIn("«третий» переставлен → 1.1", j)
+        self.assertIn("номера фазы 1 пересчитаны", j)
+
+
+class HoldResume(Base):
+    def test_hold_groups_at_end_resume_restores(self):
+        run("todo", "add", "1", "позвонить в Спокан")
+        run("todo", "add", "1", "составить бюджет")
+        code, out, err = run("todo", "hold", "1.1", "возможно позвоню позже")
+        self.assertEqual(code, 0, err)
+        todo_text = (self.case / "TODO.md").read_text()
+        self.assertIn("- [~] 1.1 позвонить в Спокан — hold: возможно позвоню позже", todo_text)
+        lines = [l for l in todo_text.splitlines() if l.startswith("  - [")]
+        self.assertTrue(lines[-1].startswith("  - [~]"), "held items sit at the end")
+        self.assertIn("todo 1.1 отложен", (self.case / "JOURNAL.md").read_text())
+        item = self.todo().phase(1).items
+        held = next(i for i in item if i.held)
+        self.assertEqual((held.text, held.hold_reason), ("позвонить в Спокан", "возможно позвоню позже"))
+        run("todo", "resume", "1.1")
+        self.assertNotIn("[~]", (self.case / "TODO.md").read_text())
+
+    def test_done_clears_hold(self):
+        run("todo", "add", "1", "пункт")
+        run("todo", "hold", "1.1", "")
+        code, out, err = run("todo", "done", "1.1")
+        self.assertEqual(code, 0, err)
+        self.assertIn("- [x] 1.1 пункт", (self.case / "TODO.md").read_text())
+
+
+class VisibleLength(Base):
+    def test_markdown_link_counts_as_its_name(self):
+        text = "[call-spokane](docs/very/long/path/to/the/call-spokane-notes-file.md) — дозвониться"
+        self.assertGreater(len(text), 80)
+        code, out, err = run("todo", "add", "1", text)
+        self.assertEqual(code, 0, err)
+        code, out, err = run("check")
+        self.assertEqual(code, 0, err + out)
+
+    def test_edit_journal_entry_truncates_old_text(self):
+        long_text = "очень длинный пункт про поездку в Спокан седьмого сентября с ночёвкой и бюджетом"
+        run("todo", "add", "1", long_text)
+        run("todo", "edit", "1.1", "короткий текст")
+        j = (self.case / "JOURNAL.md").read_text()
+        self.assertIn("…» → новый текст в TODO", j)
+        self.assertNotIn(long_text, j.split("todo 1.1")[1].split("\n")[0])

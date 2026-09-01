@@ -86,7 +86,8 @@ The artifact lands in the mike-cli clone's feedback/ pool (travels with git) and
 printed. Title + --actual + --expected are required; nothing from your environment is included.""",
     "limits": """the numbers (all enforced at write time)
 README: 200 lines / 8 KB → warning · 300 lines / 12 KB → refusal; pointer line ≤ 150 chars (warning).
-TODO: ≤ 100 lines; item text ≤ 80 chars (a refusal prints a ready trimmed suggestion);
+TODO: ≤ 100 lines; item text ≤ 80 VISIBLE chars — markdown links [name](path) count as `name`
+  (a refusal prints a ready trimmed suggestion);
   phase name — English, 1–3 words; no items deeper than N.M.
 JOURNAL: event headline ≤ 200 chars (soft 180); long text splits automatically into headline +
   up to 5 body lines of ≤ 160 chars; body beyond that → put the story in the phase file.

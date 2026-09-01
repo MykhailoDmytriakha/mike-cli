@@ -30,7 +30,13 @@ EVENT_RE = re.compile(r"^  (PHASE|DECISION|PROBLEM|RESULT|[A-Z]+) · (.+)$")
 BODY_RE = re.compile(r"^    (.+)$")
 PHASE_LINE_RE = re.compile(r"^- \[( |x)\] (\d+) (.+?)(?: — (.+))?$")
 PHASE_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*(?: [A-Za-z0-9-]+){0,2}$")  # F13: English, 1–3 words
-ITEM_RE = re.compile(r"^  - \[( |x)\] (\d+)\.(\d+) (.+)$")
+ITEM_RE = re.compile(r"^  - \[( |x|~)\] (\d+)\.(\d+) (.+)$")  # `~` = on hold
+LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
+def visible_len(text: str) -> int:
+    """Length as the reader sees it: markdown links `[name](path)` count as `name` (feedback 2026-09-01)."""
+    return len(LINK_RE.sub(r"\1", text))
 DEEP_ITEM_RE = re.compile(r"^\s+- \[( |x)\] \d+\.\d+\.\d+")
 WAITS_RE = re.compile(r"^  - waits: (\S+)$")
 SECTION_RE = re.compile(r"^## (.+)$")
@@ -173,6 +179,8 @@ class Item:
     done: bool
     text: str
     line: int
+    held: bool = False
+    hold_reason: str = ""
 
 
 @dataclass
@@ -237,14 +245,17 @@ def parse_todo(text: str) -> Todo:
             if phase is None:
                 r.error("F4", i, "item before any phase")
                 continue
-            done, n, k, txt = m.group(1) == "x", int(m.group(2)), int(m.group(3)), m.group(4).strip()
+            mark, n, k, txt = m.group(1), int(m.group(2)), int(m.group(3)), m.group(4).strip()
+            held, reason = mark == "~", ""
+            if held and " — hold: " in txt:
+                txt, reason = txt.rsplit(" — hold: ", 1)
             if n != phase.n:
                 r.error("F4", i, f"item {n}.{k} listed under phase {phase.n}")
-            if len(txt) > TODO_ITEM_CHARS:
-                r.error("F13", i, f"item {n}.{k} text is {len(txt)} chars, limit {TODO_ITEM_CHARS}")
+            if visible_len(txt) > TODO_ITEM_CHARS:
+                r.error("F13", i, f"item {n}.{k} text is {visible_len(txt)} visible chars, limit {TODO_ITEM_CHARS}")
             if phase.done:
                 r.error("F5", i, f"closed phase {phase.n} still lists items — they belong in the phase file")
-            phase.items.append(Item(n, k, done, txt, i))
+            phase.items.append(Item(n, k, mark == "x", txt, i, held, reason))
             continue
         m = WAITS_RE.match(raw)
         if m:
@@ -289,8 +300,8 @@ def parse_readme(text: str) -> Readme:
             r.error("F1", i, "text before the first section")
             continue
         r.sections[current].append(raw)
-        if raw.startswith("- ") and len(raw.strip()) > README_POINTER_CHARS:
-            r.warn("F2", i, f"pointer line is {len(raw.strip())} chars, over {README_POINTER_CHARS}")
+        if raw.startswith("- ") and visible_len(raw.strip()) > README_POINTER_CHARS:
+            r.warn("F2", i, f"pointer line is {visible_len(raw.strip())} visible chars, over {README_POINTER_CHARS}")
     if order != README_SECTIONS:
         r.error("F1", 0, f"sections must be exactly {' · '.join(README_SECTIONS)}, got {' · '.join(order) or 'none'}")
     state = r.sections.get("State", [])

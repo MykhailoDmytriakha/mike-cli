@@ -58,8 +58,10 @@ def render_todo(todo: grammar.Todo) -> str:
         if p.summary:
             head += f" — {p.summary}"
         out.append(head)
-        for it in p.items:
-            out.append(f"  - [{'x' if it.done else ' '}] {it.n}.{it.m} {it.text}")
+        for it in [i for i in p.items if not i.held] + [i for i in p.items if i.held]:
+            mark = "x" if it.done else ("~" if it.held else " ")
+            suffix = f" — hold: {it.hold_reason}" if it.held and it.hold_reason else ""
+            out.append(f"  - [{mark}] {it.n}.{it.m} {it.text}{suffix}")
         for w in p.waits:
             out.append(f"  - waits: {w}")
     return "\n".join(out) + "\n"
@@ -248,7 +250,7 @@ def todo_done(case: Path, ref: str) -> Outcome:
     if item.done:
         out.say(f"item {ref} already done — nothing changed")
         return out
-    item.done = True
+    item.done, item.held, item.hold_reason = True, False, ""
     out.absorb(store.write(case, "TODO.md", render_todo(todo)))
     out.say(f"done: {ref} {item.text} → TODO.md")
     return out
@@ -264,8 +266,9 @@ def todo_add(case: Path, ref: str, text: str) -> Outcome:
     if phase is None or phase.done:
         raise StoreError(f"phase {ref} is missing or closed", 4)
     text = " ".join(text.split())
-    if len(text) > grammar.TODO_ITEM_CHARS:
-        raise StoreError(f"item text is {len(text)} chars, limit {grammar.TODO_ITEM_CHARS} (F13)\n"
+    if grammar.visible_len(text) > grammar.TODO_ITEM_CHARS:
+        raise StoreError(f"item text is {grammar.visible_len(text)} visible chars, limit {grammar.TODO_ITEM_CHARS} (F13); "
+                         f"markdown links count as their name\n"
                          f"  suggestion: \"{_trim_suggestion(text, grammar.TODO_ITEM_CHARS)}\"", 3)
     m = max((it.m for it in phase.items), default=0) + 1
     phase.items.append(grammar.Item(phase.n, m, False, text, 0))
@@ -292,12 +295,13 @@ def todo_edit(case: Path, ref: str, text: str) -> Outcome:
     todo = _todo(case, out)
     phase, item = _find_item(todo, ref)
     text = " ".join(text.split())
-    if len(text) > grammar.TODO_ITEM_CHARS:
-        raise StoreError(f"item text is {len(text)} chars, limit {grammar.TODO_ITEM_CHARS} (F13)\n"
+    if grammar.visible_len(text) > grammar.TODO_ITEM_CHARS:
+        raise StoreError(f"item text is {grammar.visible_len(text)} visible chars, limit {grammar.TODO_ITEM_CHARS} (F13)\n"
                          f"  suggestion: \"{_trim_suggestion(text, grammar.TODO_ITEM_CHARS)}\"", 3)
     old_text, item.text = item.text, text
     out.absorb(store.write(case, "TODO.md", render_todo(todo)))
-    out.lines += log(case, "DECISION", f"todo {ref}: «{old_text}» → «{text}»", f"p{phase.n}").lines
+    old_short = old_text if len(old_text) <= 40 else old_text[:40].rstrip() + "…"
+    out.lines += log(case, "DECISION", f"todo {ref}: «{old_short}» → новый текст в TODO", f"p{phase.n}").lines
     out.say(f"edited: {ref} → TODO.md (old text kept in the journal)")
     return out
 
@@ -313,11 +317,44 @@ def todo_move(case: Path, ref: str, to: str) -> Outcome:
     k = int(m.group(2))
     phase.items.remove(item)
     phase.items.insert(max(0, min(k - 1, len(phase.items))), item)
+    renumbered = any(it.m != idx for idx, it in enumerate(phase.items, start=1))
     for idx, it in enumerate(phase.items, start=1):  # positions become contiguous
         it.m = idx
     out.absorb(store.write(case, "TODO.md", render_todo(todo)))
+    if renumbered:
+        anchor = item.text if len(item.text) <= 40 else item.text[:40].rstrip() + "…"
+        out.lines += log(case, "DECISION",
+                         f"todo «{anchor}» переставлен → {phase.n}.{item.m}; номера фазы {phase.n} пересчитаны, "
+                         f"старые ссылки N.M в журнале смотри по тексту", f"p{phase.n}").lines
     out.say(f"moved: item now at {phase.n}.{item.m}; the phase list:", *(
         f"  - [{'x' if it.done else ' '}] {it.n}.{it.m} {it.text}" for it in phase.items))
+    return out
+
+
+def todo_hold(case: Path, ref: str, reason: str) -> Outcome:
+    out = Outcome()
+    todo = _todo(case, out)
+    phase, item = _find_item(todo, ref)
+    if item.done:
+        raise StoreError(f"item {ref} is done — nothing to hold", 4)
+    item.held, item.hold_reason = True, " ".join(reason.split())
+    out.absorb(store.write(case, "TODO.md", render_todo(todo)))
+    why = f" — {item.hold_reason}" if item.hold_reason else ""
+    out.lines += log(case, "DECISION", f"todo {ref} отложен: «{item.text}»{why}", f"p{phase.n}").lines
+    out.say(f"on hold: {ref} (held items sit at the end of the phase; `mike todo resume {ref}` brings it back)")
+    return out
+
+
+def todo_resume(case: Path, ref: str) -> Outcome:
+    out = Outcome()
+    todo = _todo(case, out)
+    phase, item = _find_item(todo, ref)
+    if not item.held:
+        out.say(f"item {ref} is not on hold — nothing changed")
+        return out
+    item.held, item.hold_reason = False, ""
+    out.absorb(store.write(case, "TODO.md", render_todo(todo)))
+    out.say(f"resumed: {ref} {item.text} → TODO.md")
     return out
 
 
@@ -676,7 +713,8 @@ def doctor() -> Outcome:
         out.say(f"root: NOT FOUND — {e}", f"  recovery: {e.recovery}")
         return out
     out.say(f"root: {root}")
-    cases, rejected = store.scan(root)
+    cases = store.all_cases(root)
+    rejected = store.scan(root)[1]
     out.say(f"cases: {len(cases)} ({sum(store.is_open(c) for c in cases)} open)")
     for path, reason in rejected:
         out.say(f"  ! not a case, ignored: {path.relative_to(root)} — {reason}")
@@ -771,7 +809,8 @@ def entry(root: Path, case: Path) -> Outcome:
 
 def check(root: Path, only: Optional[Path] = None) -> Outcome:
     out = Outcome()
-    cases, rejected = store.scan(root)
+    cases = store.all_cases(root)  # the project case first in root mode (feedback 2026-09-01 #1)
+    rejected = store.scan(root)[1]
     if only is not None:
         cases = [c for c in cases if c == only or only in c.parents]
     for path, reason in rejected:
@@ -823,7 +862,10 @@ def check(root: Path, only: Optional[Path] = None) -> Outcome:
     if log_lines:
         with (root / "checks.log").open("a", encoding="utf-8") as fh:
             fh.write("\n".join(log_lines) + "\n")
-    out.say(f"cases: {len(cases)} · violations: {errors} · warnings: {len(out.warnings)}")
+    if not cases:
+        out.say("cases: 0 — NOTHING WAS CHECKED (no cases found here); a zero here is not a green light")
+    else:
+        out.say(f"cases: {len(cases)} · violations: {errors} · warnings: {len(out.warnings)}")
     if errors:
-        raise StoreError("\n".join(out.lines), 3)
+        raise StoreError("\n".join(out.lines + [f"warning: {w}" for w in out.warnings]), 3)
     return out
