@@ -25,6 +25,8 @@ EXAMPLES = """examples
   mike spawn "db unreachable from server" --goal "server cannot reach the database, cause unknown"
   mike done "database connected and validated"
   mike feedback "log rejects names" --actual "..." --expected "..."   report a mike problem
+  mike order                             what is out of order in the case in hand + the fix for each line
+  mike order --adopt                     move file descriptions from README Links into the files as `summary:`
   mike check                             all cases against RULES.md; violations → exit 3
   mike doctor                            read-only diagnostics, changes nothing
   mike --case mle-prod check             check one case only
@@ -82,6 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--acceptance", default="")
     s.add_argument("--repro", default="")
 
+    s = sub.add_parser("order", help="what is out of order in the case in hand, with the fix for each line", allow_abbrev=False)
+    s.add_argument("--adopt", action="store_true", help="write `summary:` into files from their README Links descriptions")
     sub.add_parser("check", help="verify every case against the rules", allow_abbrev=False)
     sub.add_parser("doctor", help="read-only diagnostics: what mike sees from here; changes nothing", allow_abbrev=False)
     s = sub.add_parser("help", help="examples; `mike help <topic>` opens a knowledge dose", allow_abbrev=False)
@@ -184,6 +188,8 @@ def run(argv=None) -> int:
                 else:
                     text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
                     out = commands.readme(case, text)
+            elif args.cmd == "order":
+                out = commands.order_cmd(root, case, args.adopt)
             elif args.cmd == "spawn":
                 out = commands.spawn(root, case, args.name, args.goal)
             elif args.cmd == "done":
@@ -203,6 +209,8 @@ def run(argv=None) -> int:
         print("\n".join(lines), file=sys.stderr)
         if args.cmd is None:  # the entry command must explain itself on stdout too (feedback #4)
             print("\n".join(lines))
+            if e.code == 4 and "no `.cases/`" in str(e):
+                print(knowledge.ONBOARDING)
         return e.code
 
 

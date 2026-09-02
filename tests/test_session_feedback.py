@@ -28,12 +28,14 @@ class Base(unittest.TestCase):
 
 
 class EditableTodo(Base):
-    def test_edit_rewrites_text_and_journals_the_old(self):
+    def test_edit_rewrites_text_and_shows_the_old(self):
         run("todo", "add", "1", "позвонить пастору")
         code, out, err = run("todo", "edit", "1.1", "позвонить пастору до пятницы")
         self.assertEqual(code, 0, err)
         self.assertEqual(self.todo().phase(1).items[0].text, "позвонить пастору до пятницы")
-        self.assertIn("todo 1.1: «позвонить пастору»", (self.case / "JOURNAL.md").read_text())
+        self.assertIn("was: «позвонить пастору»", out)
+        # P5: an edit is not an event — since 0.9 mike writes no journal line for it (git keeps history)
+        self.assertNotIn("todo 1.1", (self.case / "JOURNAL.md").read_text())
 
     def test_move_reorders_and_renumbers(self):
         for t in ("a", "b", "c", "d"):
@@ -44,12 +46,13 @@ class EditableTodo(Base):
         self.assertEqual([it.m for it in self.todo().phase(1).items], [1, 2, 3, 4])
         self.assertEqual(run("todo", "move", "1.2", "2.1")[0], 2)  # cross-phase → usage error
 
-    def test_drop_removes_and_journals(self):
+    def test_drop_removes_and_shows_the_text(self):
         run("todo", "add", "1", "лишний пункт")
         code, out, err = run("todo", "drop", "1.1")
         self.assertEqual(code, 0, err)
         self.assertEqual(self.todo().phase(1).items, [])
-        self.assertIn("todo 1.1 снят: «лишний пункт»", (self.case / "JOURNAL.md").read_text())
+        self.assertIn("«лишний пункт»", out)
+        self.assertNotIn("лишний пункт", (self.case / "JOURNAL.md").read_text())
 
     def test_too_long_item_prints_a_ready_suggestion(self):
         code, out, err = run("todo", "add", "1", "слово " * 30)
@@ -144,13 +147,15 @@ class RootCaseCheck(unittest.TestCase):
 
 
 class MoveJournaling(Base):
-    def test_move_logs_renumbering_with_text_anchor(self):
+    def test_move_says_renumbering_but_writes_no_journal_noise(self):
         for t in ("первый", "второй", "третий"):
             run("todo", "add", "1", t)
-        run("todo", "move", "1.3", "1.1")
+        code, out, err = run("todo", "move", "1.3", "1.1")
+        self.assertEqual(code, 0, err)
+        self.assertIn("numbers of phase 1 recounted", out)
         j = (self.case / "JOURNAL.md").read_text()
-        self.assertIn("«третий» переставлен → 1.1", j)
-        self.assertIn("номера фазы 1 пересчитаны", j)
+        self.assertNotIn("переставлен", j)
+        self.assertEqual(j.count("DECISION"), 0, "a move is an action, not an event (P5)")
 
 
 class HoldResume(Base):
@@ -163,7 +168,7 @@ class HoldResume(Base):
         self.assertIn("- [~] 1.1 позвонить в Спокан — hold: возможно позвоню позже", todo_text)
         lines = [l for l in todo_text.splitlines() if l.startswith("  - [")]
         self.assertTrue(lines[-1].startswith("  - [~]"), "held items sit at the end")
-        self.assertIn("todo 1.1 отложен", (self.case / "JOURNAL.md").read_text())
+        self.assertNotIn("отложен", (self.case / "JOURNAL.md").read_text())
         item = self.todo().phase(1).items
         held = next(i for i in item if i.held)
         self.assertEqual((held.text, held.hold_reason), ("позвонить в Спокан", "возможно позвоню позже"))
@@ -187,10 +192,10 @@ class VisibleLength(Base):
         code, out, err = run("check")
         self.assertEqual(code, 0, err + out)
 
-    def test_edit_journal_entry_truncates_old_text(self):
+    def test_edit_keeps_the_journal_clean(self):
         long_text = "очень длинный пункт про поездку в Спокан седьмого сентября с ночёвкой и бюджетом"
         run("todo", "add", "1", long_text)
-        run("todo", "edit", "1.1", "короткий текст")
-        j = (self.case / "JOURNAL.md").read_text()
-        self.assertIn("…» → новый текст в TODO", j)
-        self.assertNotIn(long_text, j.split("todo 1.1")[1].split("\n")[0])
+        code, out, err = run("todo", "edit", "1.1", "короткий текст")
+        self.assertEqual(code, 0, err)
+        self.assertIn(long_text, out, "the old text is shown to the caller")
+        self.assertNotIn(long_text, (self.case / "JOURNAL.md").read_text())
