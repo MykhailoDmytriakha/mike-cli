@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-from . import grammar, order, stamp, store
+from . import grammar, migrate, order, stamp, store
 from .store import StoreError
 
 MAX_SCREEN = 24_000  # chars: Claude Code truncates tool output around 30K (owner's measurement 2026-08-22)
@@ -67,13 +67,25 @@ def render_todo(todo: grammar.Todo) -> str:
     return "\n".join(out) + "\n"
 
 
+def _unparsable(case: Path, name: str) -> StoreError:
+    """The precise blocker: a legacy file (never stamped, outside the grammar) names `mike migrate`;
+    a file mike wrote that broke since names `mike check` (S4 rebuilds it on the next write)."""
+    why = migrate.legacy_reason(case, name)
+    if why:
+        return StoreError(f"{name} is outside mike's grammar and was never stamped by mike ({why}) — a legacy case; "
+                          f"nothing is written until it is migrated", 3, recovery=store.MIGRATE_HINT)
+    return StoreError(f"{name} is not parsable — see the violations: mike check", 3, recovery="mike check")
+
+
 def _todo(case: Path, out: Optional[Outcome] = None) -> grammar.Todo:
+    if migrate.legacy_reason(case, "TODO.md"):
+        raise _unparsable(case, "TODO.md")  # before store.load: a legacy file is never rebuilt
     body, report = store.load(case, "TODO.md")
     if out is not None:
         out.absorb(report)
     todo = grammar.parse_todo(body)
     if todo.errors:
-        raise StoreError("TODO.md is not parsable — run `mike check`", 3)
+        raise _unparsable(case, "TODO.md")
     return todo
 
 
@@ -261,6 +273,8 @@ def log(case: Path, typ: str, text: str, phase: Optional[str] = None) -> Outcome
     todo = _todo(case, out)
     phase = _resolve_phase(todo, phase) if phase else _phase_of(todo)
     date, time = _now()
+    if migrate.legacy_reason(case, "JOURNAL.md"):
+        raise _unparsable(case, "JOURNAL.md")
     body, report = store.load(case, "JOURNAL.md")
     out.absorb(report)
     lines = body.rstrip("\n").split("\n")
@@ -301,12 +315,14 @@ def _events_for_phase(journal: grammar.Journal, phase: str):
 
 
 def _journal(case: Path, out: Optional[Outcome] = None) -> grammar.Journal:
+    if migrate.legacy_reason(case, "JOURNAL.md"):
+        raise _unparsable(case, "JOURNAL.md")
     body, report = store.load(case, "JOURNAL.md")
     if out is not None:
         out.absorb(report)
     j = grammar.parse_journal(body)
     if j.errors:
-        raise StoreError("JOURNAL.md is not parsable — run `mike check`", 3)
+        raise _unparsable(case, "JOURNAL.md")
     return j
 
 
@@ -450,6 +466,11 @@ def _phase_file(case: Path, n: int, name: str) -> Path:
 def _closing_checks(case: Path, prev: grammar.Phase, journal: grammar.Journal) -> List[str]:
     """What P8 demands from a phase before the next one may open."""
     missing = []
+    pf0 = _phase_file(case, prev.n, prev.name)
+    if pf0.exists():
+        parsed0 = grammar.parse_phase_file(pf0.read_text(encoding="utf-8"))
+        if not parsed0.errors and parsed0.goal.startswith("migrated from legacy"):
+            return []  # closed by `mike migrate`: its RESULT/reflect/align live in the legacy archive
     evs = _events_for_phase(journal, f"p{prev.n}")
     if not any(ev.type == "RESULT" for ev in evs):
         missing.append(f"phase {prev.n}: no RESULT in the journal (F9)")
@@ -547,9 +568,12 @@ def phase_close(case: Path, n: int, summary: str) -> Outcome:
 def readme(case: Path, text: str) -> Outcome:
     out = Outcome()
     body, _ = stamp.split(text)
-    todo = _todo(case, out)
-    if not re.search(r"^- progress:", body, re.M):
-        body = _set_state_line(body, "progress: ", progress_line(todo, case))
+    try:
+        todo = _todo(case, out)
+        if not re.search(r"^- progress:", body, re.M):
+            body = _set_state_line(body, "progress: ", progress_line(todo, case))
+    except StoreError as e:  # readme-only mode: the README is written, progress: is not synced
+        out.warn(f"progress: not synced — {e} (recovery: {e.recovery})")
     _write_readme(case, body, out, anchor=True)
     out.say("written: README.md (State anchored `as of` the newest journal entry; Links rendered from the files)")
     return out
@@ -562,7 +586,7 @@ def _readme_sections(case: Path, out: Outcome):
     body = _readme_text(case, out)
     parsed = grammar.parse_readme(body)
     if parsed.errors:
-        raise StoreError("README.md is not parsable — run `mike check`", 3)
+        raise _unparsable(case, "README.md")
     return parsed
 
 
@@ -809,6 +833,8 @@ def doctor() -> Outcome:
                     "mismatch": "stamp MISMATCH — edited bypassing mike; next mike write will rebuild (S4)",
                     "not-last": "stamp NOT LAST — something appended after it; next mike write will rebuild (S4)"}[state]
             out.say(f"  {f.name}: {note}")
+        for name, why in store.legacy_files(case):
+            out.say(f"  ! {name}: legacy — {why}; outside the grammar and never stamped → {store.MIGRATE_HINT}")
         for rec in store.recover_files(case):
             out.say(f"  ! pending {rec.name} — re-enter its lines with mike, then: rm '{rec}'")
         if case != store.project_case(store.find_root()):
@@ -890,6 +916,10 @@ def _order_lines(case: Path, root: Path, readme_body: str, journal: Optional[gra
     parsed = grammar.parse_readme(readme_body)
     links = parsed.sections.get("Links", []) if not parsed.errors else []
     lines = order.report(case, _is_project(case), readme_body, journal, links)
+    legacy = store.legacy_files(case)
+    if legacy:
+        lines.insert(0, f"legacy file(s) outside mike's grammar, never stamped: {', '.join(n for n, _ in legacy)} → "
+                        f"{store.MIGRATE_HINT}")
     for rec in store.recover_files(case):
         lines.append(f"pending {rec.name} → re-enter its lines with mike, then: rm '{rec}' (S4)")
     if case != store.project_case(root):
@@ -950,6 +980,30 @@ def order_cmd(root: Path, case: Path, adopt: bool = False) -> Outcome:
     return out
 
 
+def migrate_cmd(case: Path, apply: bool = False) -> Outcome:
+    """Legacy case → canonical files (P13). Dry run by default; `--apply` archives and writes."""
+    out = Outcome()
+    date, time = _now()
+    plan = migrate.analyse(case, (date, time))
+    if plan.empty:
+        out.say(f"nothing to migrate: {case.name} — the three files are in mike's grammar and stamped (or absent)")
+        return out
+    out.say(*migrate.report(plan, dry=not apply))
+    if not apply:
+        return out
+    for line in migrate.apply(plan):
+        out.say(line)
+    rel = plan.archive.relative_to(case)
+    out.lines += log(case, "PHASE", f"дело перенесено из legacy формата → {rel}/ ({', '.join(sorted(plan.legacy))} byte-for-byte); "
+                     f"журнал не конвертирован — перенеси нужное: mike log; State переписать: mike readme set next", "p0").lines
+    if "README.md" not in plan.legacy:  # README kept: it still gets the pointer to the archive
+        out.lines += readme_add(case, "links", f"{migrate.ARCHIVE_DIR}/ — файлы дела до миграции {date}, byte-for-byte: "
+                                f"{', '.join(sorted(plan.legacy))}").lines
+    _sync_progress(case, _todo(case, out), out)
+    out.say("migrated — now: mike (Order shows what to rewrite) · mike readme set next \"…\" · mike check")
+    return out
+
+
 def check(root: Path, only: Optional[Path] = None) -> Outcome:
     out = Outcome()
     cases = store.all_cases(root)  # the project case first in root mode (feedback 2026-09-01 #1)
@@ -987,6 +1041,9 @@ def check(root: Path, only: Optional[Path] = None) -> Outcome:
                 errors += 1
         for rec in store.recover_files(case):
             out.warn(f"{case.name}: pending {rec.name}")
+        legacy = store.legacy_files(case)
+        if legacy:
+            out.say(f"  {case.name}: legacy file(s) never stamped by mike — {', '.join(n for n, _ in legacy)} → {store.MIGRATE_HINT}")
         readme_text_ = store.read(case, "README.md") if store.file_path(case, "README.md").exists() else ""
         for folder in sorted(case.iterdir()):
             if (not folder.is_dir() or folder.name.startswith(".") or folder.name == "phases"

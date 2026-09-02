@@ -266,6 +266,13 @@ def write(case: Path, name: str, body: str) -> WriteReport:
     e.g. left by an older mike version) must not deadlock every future write: the file is rebuilt,
     the broken lines go to `<FILE>.recover.md`, the write proceeds with a warning (S4 semantics).
     """
+    current_text = read(case, name) if file_path(case, name).exists() else ""
+    _, current_state = stamp.verify(current_text) if current_text else (False, "missing")
+    if current_text and current_state == "missing" and recover.PARSERS[name](current_text).errors:
+        # A legacy file: never stamped by mike and outside the grammar. Rebuilding it (S4) would
+        # move most of it into .recover.md — that is not migration (feedback 2026-09-02).
+        raise StoreError(f"{name} is outside mike's grammar and was never stamped by mike — a legacy file; "
+                         f"nothing is written into it until the case is migrated", 3, recovery=MIGRATE_HINT)
     report = check_stamp(case, name)
     result = recover.PARSERS[name](body)
     if result.errors:
@@ -295,3 +302,18 @@ def write(case: Path, name: str, body: str) -> WriteReport:
 
 def recover_files(case: Path) -> List[Path]:
     return sorted(case.glob("*.recover.md"))
+
+
+def legacy_files(case: Path) -> List[tuple]:
+    """Files among the three that the grammar rejects AND that carry no valid mike stamp — a case
+    written before mike or by hand since. Nothing is written into them: `mike migrate` first."""
+    from . import migrate  # local import: migrate imports store
+    out = []
+    for name in FILES:
+        why = migrate.legacy_reason(case, name)
+        if why:
+            out.append((name, why))
+    return out
+
+
+MIGRATE_HINT = "mike migrate   (dry run, changes nothing) · then: mike migrate --apply"

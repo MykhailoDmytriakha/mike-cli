@@ -128,9 +128,26 @@ Why limits exist: they keep the entry screen readable and squeeze water out — 
 in phase files and folders, pointers belong in README. A limit on the top layer alone moves the
 water one layer down — that is why the lower layer has a budget too (F15).""",
 
+    "migrate": """migrate — a legacy case into mike's grammar (P13)
+A legacy file = README/TODO/JOURNAL that mike never stamped and the grammar rejects (written
+before mike, or by hand since). Every write into it is refused — rebuilding by grammar (S4)
+would move most of it into .recover.md, and that is not migration.
+- `mike migrate` — dry run: which files are legacy, what maps where, what stays in the archive
+  for review. Changes nothing.
+- `mike migrate --apply` — copies the legacy files byte-for-byte into legacy/<date-time>/ (verified),
+  then writes the canonical files atomically; any failure puts the archive back.
+What maps: README sections by name (goal/context/summary → Context; decisions; problems/risks/
+open → Problems; links) · TODO headings → phases (English 1–3 words, else `Legacy N`), checkbox
+lines → items (long ones trimmed; a phase with all items done is closed, its phase file says
+`migrated from legacy` and P8 gates skip it) · JOURNAL → not converted: guessing types would be
+lying; the new journal opens with one PHASE event pointing at the archive — re-enter what still
+matters with `mike log`.
+After apply: `mike` (Order shows what to rewrite), `mike readme set next "…"`, `mike check`.""",
+
     "errors": """exit codes and what to do
 0 — done. 1 — internal error. 2 — wrong usage (the message shows the correct form).
 3 — rule violation: the write was REFUSED, no file was touched; fix the input as the message says.
+    "outside mike's grammar and was never stamped" = a legacy file → `mike migrate` (see `mike help migrate`).
 4 — precondition not met: no .cases/ from here upwards · every case closed · a case file missing ·
     a phase not ready to open/close. The message names the check and a recovery command.
 Diagnostics without any writes: `mike doctor`. Facts that save an investigation:

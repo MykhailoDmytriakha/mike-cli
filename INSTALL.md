@@ -49,6 +49,7 @@ mike case new "название дела" --goal "цель одной строк
 - `mike` вне проекта → `no .cases/ found …`, выход 4 — так и должно быть
 - `mike check` → `violations: 0`
 - `mike order` → `order: ✓ everything in place` (или список того, что поправить)
+- дело велось до `mike` (файлы без `stamp:`) → `mike migrate` покажет план, `mike migrate --apply` перенесёт: старые файлы byte-for-byte в `legacy/`, новые — в грамматике
 
 ## Как это устроено — для любопытных
 

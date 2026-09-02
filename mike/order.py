@@ -26,7 +26,7 @@ FILE_WARN_BYTES = 24 * 1024
 FOLDER_WARN_BYTES = 64 * 1024
 DUP_JACCARD = 0.40  # measured 2026-09-01: a real duplicate pair scored 0.46, the next pair 0.24
 WORD_RE = re.compile(r"[a-zа-яё0-9]{4,}", re.I)
-SKIP_DIRS = {"phases", "node_modules", "scripts"}
+SKIP_DIRS = {"phases", "node_modules", "scripts", "legacy"}  # legacy/ = byte-for-byte archive, never nagged
 # L4 kinds — in root mode only these (plus folders already listed in Links) are content folders,
 # because the project folder also holds source code, build output and whatever else.
 KNOWN_KINDS = {"docs", "research", "logs", "meetings", "jira", "data", "inbox", "notes", "forms",
@@ -184,7 +184,9 @@ def render_links(case: Path, root_mode: bool, manual_lines: List[str]) -> Tuple[
     fallback: Dict[str, str] = {}
     for raw in manual_lines:
         kind, a, b = _classify(raw.strip() if raw.startswith("  -") else raw, case)
-        if kind == "folder":
+        if kind == "folder" and ((a in SKIP_DIRS and a != "phases") or a.startswith(".")):
+            manual.append(raw)  # a folder mike does not render (legacy/, scripts/ …): the agent's line stays as written
+        elif kind == "folder":
             # the newest real description wins; a placeholder we rendered earlier counts as none
             if b and not b.startswith(PLACEHOLDER_FOLDER):
                 folder_desc[a] = b
