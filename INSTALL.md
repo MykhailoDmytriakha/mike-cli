@@ -9,7 +9,7 @@
 ```sh
 git clone https://github.com/MykhailoDmytriakha/mike-cli.git ~/MyProjects/mike-cli   # клон может лежать где угодно
 ln -sf ~/MyProjects/mike-cli/bin/mike ~/.local/bin/mike
-mike --version        # → mike 0.11.0
+mike --version        # → mike 0.12.0
 ```
 
 Обновление на любой машине — `git pull` в клоне: команда, правила и тесты приезжают одним движением, symlink переустанавливать не нужно.
@@ -41,6 +41,8 @@ mike case new "название дела" --goal "цель одной строк
 - Решил проблему → сразу `mike log PROBLEM "проблема → корень → решение"` и рецепт-файл в `.howto/` (первая строка `when: <слова ошибки>`). Упёрся → сначала `grep -ril "<слова ошибки>" .howto/`.
 - Закрыл кусок → `mike todo done N.M`; фазу → `mike phase close N "итог"`; дело → `mike done "итог"`.
 - Видишь работу со сроком вне текущей фазы → `mike phase plan N "Name" --goal "…"` и `mike todo add N "…"`: фаза стоит в TODO заранее, откроется `mike phase open N`, когда текущая закрыта.
+- У куска работы есть дата → пиши её так, чтобы инструмент видел: `mike todo add N "текст — due: 2026-09-09"`; срок дела → `mike readme set due "2026-09-13 · что"`. На входе `mike` скажет, что сегодня, что просрочено и сколько дней до срока.
+- Пункт больше не нужен → `mike todo cancel N.M "почему"` (не `done`); пункт переехал в другую фазу → `mike todo move N.M K`; переносишь файл → `mike mv old new` — ссылки переписываются сами.
 - Заканчиваешь → снова `mike`: если `Order` говорит «State is behind» — перепиши `State` (`mike readme set next "…"`). Следующая сессия начнётся с этой строки.
 ```
 

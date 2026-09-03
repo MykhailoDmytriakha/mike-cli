@@ -37,14 +37,19 @@ class EditableTodo(Base):
         # P5: an edit is not an event — since 0.9 mike writes no journal line for it (git keeps history)
         self.assertNotIn("todo 1.1", (self.case / "JOURNAL.md").read_text())
 
-    def test_move_reorders_and_renumbers(self):
+    def test_move_reorders_and_keeps_the_numbers(self):
+        # feedback 2026-09-03: one rule for the list — N.M is the item's number for life, order is separate
         for t in ("a", "b", "c", "d"):
             run("todo", "add", "1", t)
         code, out, err = run("todo", "move", "1.4", "1.1")
         self.assertEqual(code, 0, err)
+        self.assertIn("moved: 1.4 now before 1.1 — numbers never change", out)
         self.assertEqual([it.text for it in self.todo().phase(1).items], ["d", "a", "b", "c"])
-        self.assertEqual([it.m for it in self.todo().phase(1).items], [1, 2, 3, 4])
+        self.assertEqual([it.m for it in self.todo().phase(1).items], [4, 1, 2, 3])
         self.assertEqual(run("todo", "move", "1.2", "2.1")[0], 2)  # cross-phase → usage error
+        code, out, err = run("todo", "edit", "1.4", "D")  # the number still means the item that was read
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.todo().phase(1).items[0].text, "D")
 
     def test_drop_removes_and_shows_the_text(self):
         run("todo", "add", "1", "лишний пункт")
@@ -152,7 +157,7 @@ class MoveJournaling(Base):
             run("todo", "add", "1", t)
         code, out, err = run("todo", "move", "1.3", "1.1")
         self.assertEqual(code, 0, err)
-        self.assertIn("numbers of phase 1 recounted", out)
+        self.assertIn("numbers never change", out)
         j = (self.case / "JOURNAL.md").read_text()
         self.assertNotIn("переставлен", j)
         self.assertEqual(j.count("DECISION"), 0, "a move is an action, not an event (P5)")
@@ -202,16 +207,37 @@ class VisibleLength(Base):
 
 
 class MoveRange(Base):
-    def test_move_past_the_end_is_refused_not_clamped(self):
+    def test_move_to_an_unknown_target_is_refused_not_clamped(self):
         # feedback 2026-09-03: `todo move 2.5 2.37` in a 24-item phase answered "now at 2.24" — silently clamped
         for t in ("a", "b", "c"):
             run("todo", "add", "1", t)
         code, out, err = run("todo", "move", "1.1", "1.7")
-        self.assertEqual(code, 2)
-        self.assertIn("phase 1 has items 1.1–1.3 — there is no 1.7", err)
-        self.assertIn("mike todo move 1.1 1.3", err)
+        self.assertEqual(code, 4)
+        self.assertIn("no item 1.7 in phase 1 (items: 1.1–1.3)", err)
+        self.assertIn("mike todo move 1.1 last", err)
         self.assertEqual([it.text for it in self.todo().phase(1).items], ["a", "b", "c"], "nothing moved")
-        self.assertEqual(run("todo", "move", "1.1", "1.0")[0], 2)
-        code, out, err = run("todo", "move", "1.1", "1.3")
+        self.assertEqual(run("todo", "move", "1.1", "1.0")[0], 4)
+        code, out, err = run("todo", "move", "1.1", "last")
         self.assertEqual(code, 0, err)
+        self.assertIn("moved: 1.1 now last", out)
         self.assertEqual([it.text for it in self.todo().phase(1).items], ["b", "c", "a"])
+        code, out, err = run("todo", "move", "1.1", "1.3")  # before 1.3
+        self.assertEqual([it.text for it in self.todo().phase(1).items], ["b", "a", "c"])
+        self.assertIn("already there", run("todo", "move", "1.1", "1.1")[1])
+
+
+class DropKeepsNumbers(Base):
+    def test_drop_says_which_numbers_remain_and_they_still_mean_the_same_items(self):
+        # feedback 2026-09-03: after a batch of drops the caller assumed renumbering and edited the wrong item
+        for t in ("a", "b", "c", "d", "e"):
+            run("todo", "add", "1", t)
+        code, out, err = run("todo", "drop", "1.2")
+        self.assertEqual(code, 0, err)
+        self.assertIn("numbers kept, phase 1 now reads 1.1, 1.3–1.5", out)
+        run("todo", "drop", "1.4")
+        self.assertEqual([it.m for it in self.todo().phase(1).items], [1, 3, 5])
+        code, out, err = run("todo", "edit", "1.5", "E")
+        self.assertEqual(code, 0, err)
+        self.assertEqual([it.text for it in self.todo().phase(1).items], ["a", "c", "E"])
+        code, out, err = run("todo", "add", "1", "f")
+        self.assertIn("added: 1.6 f", out, "a new item takes the next free number")

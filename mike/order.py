@@ -39,10 +39,11 @@ SKIP_DIRS = {"phases", "node_modules", "scripts", "legacy"}  # legacy/ = byte-fo
 KNOWN_KINDS = {"docs", "research", "logs", "meetings", "jira", "data", "inbox", "notes", "forms",
                "briefing", "print", "reports", "letters", "evidence", "correspondence"}
 POINTER_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)|`([^`]+)`|(?<![\w/])((?:[\w.-]+/)+[\w.-]*)")
-FOLDER_LINE_RE = re.compile(r"^- (?:`|\[)?([\w.-]+)/(?:`|\]\([\w./-]+\))?(?:\s*[—–-]\s*(.*))?$")
+FOLDER_LINE_RE = re.compile(r"^- (?:`|\[)?([\w.-]+(?:/[\w.-]+)*)/(?:`|\]\([\w./-]+\))?(?:\s*[—–-]\s*(.*))?$")  # `docs/` or nested `docs/notes/`
 STATE_ANCHOR_RE = re.compile(r"^- as of: (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?: · (p\d+(?:\.\d+)?))?(?: \((\d+) events?\))?\s*$", re.M)
 PLACEHOLDER_FOLDER = "(describe this folder:"
 PLACEHOLDER_FILE = "summary: missing"
+LINK_RE = re.compile(r"(\]\()([^)\s]+)(\))")  # a markdown link target
 
 
 @dataclass
@@ -55,11 +56,19 @@ class Doc:
 
 @dataclass
 class Folder:
-    name: str
+    name: str            # path relative to the case: `docs`, nested `docs/notes`
     path: Path
-    docs: List[Doc] = field(default_factory=list)
-    other: List[str] = field(default_factory=list)   # non-md files and sub-folders, as short labels
+    docs: List[Doc] = field(default_factory=list)          # markdown files directly inside
+    subs: List["Folder"] = field(default_factory=list)     # sub-folders, scanned the same way
+    other: List[str] = field(default_factory=list)         # non-md files, as short labels
     md_bytes: int = 0
+
+    def all_docs(self) -> List[Doc]:
+        """Every markdown file in the folder and below — what summaries, duplicates and budgets look at."""
+        out = list(self.docs)
+        for s in self.subs:
+            out.extend(s.all_docs())
+        return out
 
 
 # ---- scanning ------------------------------------------------------------------------------------
@@ -111,23 +120,28 @@ def content_folders(case: Path, root_mode: bool, listed: Optional[set] = None) -
             continue
         if root_mode and d.name not in KNOWN_KINDS and d.name not in listed:
             continue
-        folder = Folder(d.name, d)
-        for child in sorted(d.iterdir()):
-            if child.name.startswith("."):
-                continue
-            if child.is_dir():
-                if _is_case_dir(child):
-                    continue
-                n = sum(1 for f in child.rglob("*") if f.is_file() and not f.name.startswith("."))
-                folder.other.append(f"{child.name}/ {n} file(s)")
-            elif child.suffix.lower() == ".md":
-                size = child.stat().st_size
-                folder.docs.append(Doc(f"{d.name}/{child.name}", child, read_summary(child), size))
-                folder.md_bytes += size
-            else:
-                folder.other.append(child.name)
-        out.append(folder)
+        out.append(_scan_folder(d, d.name))
     return out
+
+
+def _scan_folder(d: Path, rel: str) -> Folder:
+    """A content folder with its markdown files, its sub-folders (the same way, any depth) and its
+    other files. Sorting documents into sub-folders by kind is normal housekeeping — the map must
+    see into them, or a third of a case goes invisible (feedback 2026-09-03)."""
+    folder = Folder(rel, d)
+    for child in sorted(d.iterdir()):
+        if child.name.startswith("."):
+            continue
+        if child.is_dir():
+            if not _is_case_dir(child) and child.name not in SKIP_DIRS:
+                folder.subs.append(_scan_folder(child, f"{rel}/{child.name}"))
+        elif child.suffix.lower() == ".md":
+            size = child.stat().st_size
+            folder.docs.append(Doc(f"{rel}/{child.name}", child, read_summary(child), size))
+            folder.md_bytes += size
+        else:
+            folder.other.append(child.name)
+    return folder
 
 
 def phases_folder(case: Path) -> Optional[Folder]:
@@ -189,9 +203,11 @@ def render_links(case: Path, root_mode: bool, manual_lines: List[str]) -> Tuple[
     manual: List[str] = []
     folder_desc: Dict[str, str] = {}
     fallback: Dict[str, str] = {}
+    fallback_raw: Dict[str, str] = {}
     for raw in manual_lines:
-        kind, a, b = _classify(raw.strip() if raw.startswith("  -") else raw, case)
-        if kind == "folder" and ((a in SKIP_DIRS and a != "phases") or a.startswith(".")):
+        stripped = raw.lstrip()
+        kind, a, b = _classify(stripped if stripped.startswith("- ") else raw, case)  # nested lines: by content, any depth
+        if kind == "folder" and ((a.split("/")[0] in SKIP_DIRS and a != "phases") or a.startswith(".")):
             manual.append(raw)  # a folder mike does not render (legacy/, scripts/ …): the agent's line stays as written
         elif kind == "folder":
             # the newest real description wins; a placeholder we rendered earlier counts as none
@@ -202,36 +218,53 @@ def render_links(case: Path, root_mode: bool, manual_lines: List[str]) -> Tuple[
         elif kind == "file":
             if b and not b.startswith(PLACEHOLDER_FILE):
                 fallback[a] = b
-        elif raw.startswith("  - other: "):
+                fallback_raw[a] = raw
+        elif stripped.startswith("- other: "):
             continue  # rendered by us
         else:
             manual.append(raw)
-    listed = set(folder_desc) | {r.split("/")[0] for r in fallback}
+    listed = {n.split("/")[0] for n in folder_desc} | {r.split("/")[0] for r in fallback}
     folders = content_folders(case, root_mode, listed)
     ph = phases_folder(case)
     if ph and ph.docs:
         folders.append(ph)
-    out = list(manual)
+    rendered: set = set()
+    blocks: List[str] = []
     for f in folders:
         desc = folder_desc.get(f.name, "")
         if f.name == "phases" and not desc:
             desc = "по фазам: goal → result"
         if desc:
-            out.append(f"- {f.name}/ — {desc}")
+            blocks.append(f"- {f.name}/ — {desc}")
         else:
-            out.append(f"- {f.name}/ — {PLACEHOLDER_FOLDER} mike readme add links \"{f.name}/ — …\")")
-        for d in f.docs:
-            name = d.path.name
-            summary = d.summary or fallback.get(d.rel)
-            if summary:
-                out.append(f"  - [{name}]({d.rel}) — {_short(summary, SUMMARY_CHARS)}")
-            else:
-                out.append(f"  - [{name}]({d.rel}) — {PLACEHOLDER_FILE} → add `summary: …` as line 2")
-        if f.other:
-            shown = f.other[:6]
-            more = f" … +{len(f.other) - 6}" if len(f.other) > 6 else ""
-            out.append(f"  - other: {', '.join(shown)}{more}")
-    return out, fallback
+            blocks.append(f"- {f.name}/ — {PLACEHOLDER_FOLDER} mike readme add links \"{f.name}/ — …\")")
+        _render_folder(f, 1, folder_desc, fallback, rendered, blocks)
+    # a line the agent wrote for a file mike does not render here (outside the content folders) is
+    # never dropped: it stays among the manual lines — `line added` must stay true (feedback 2026-09-03)
+    out = manual + [raw for rel, raw in fallback_raw.items() if rel not in rendered] + blocks
+    return out, {rel: desc for rel, desc in fallback.items() if rel in rendered}
+
+
+def _render_folder(f: Folder, depth: int, folder_desc: Dict[str, str], fallback: Dict[str, str],
+                   rendered: set, out: List[str]):
+    """Under a folder line: its files by their summaries, then each sub-folder one level deeper
+    (full path `- docs/notes/`, so the line re-parses as that folder), then the other files."""
+    ind = "  " * depth
+    for d in f.docs:
+        rendered.add(d.rel)
+        summary = d.summary or fallback.get(d.rel)
+        if summary:
+            out.append(f"{ind}- [{d.path.name}]({d.rel}) — {_short(summary, SUMMARY_CHARS)}")
+        else:
+            out.append(f"{ind}- [{d.path.name}]({d.rel}) — {PLACEHOLDER_FILE} → add `summary: …` as line 2")
+    for s in f.subs:
+        desc = folder_desc.get(s.name, "")
+        out.append(f"{ind}- {s.name}/" + (f" — {desc}" if desc else ""))
+        _render_folder(s, depth + 1, folder_desc, fallback, rendered, out)
+    if f.other:
+        shown = f.other[:6]
+        more = f" … +{len(f.other) - 6}" if len(f.other) > 6 else ""
+        out.append(f"{ind}- other: {', '.join(shown)}{more}")
 
 
 def adopt(case: Path, fallback: Dict[str, str]) -> List[str]:
@@ -262,7 +295,7 @@ def _shingles(path: Path) -> set:
 
 def duplicates(folders: List[Folder]) -> List[Tuple[str, str, float]]:
     """(smaller file, other file, share of the smaller file's phrasing found verbatim in the other)."""
-    docs = [d for f in folders if f.name != "phases" for d in f.docs]
+    docs = [d for f in folders if f.name != "phases" for d in f.all_docs()]
     shingles = {d.rel: _shingles(d.path) for d in docs}
     pairs = []
     for i, a in enumerate(docs):
@@ -285,7 +318,7 @@ def budgets(folders: List[Folder]) -> List[str]:
     for f in folders:
         if f.name == "phases":
             continue
-        for d in f.docs:
+        for d in f.all_docs():
             if d.bytes > FILE_WARN_BYTES:
                 out.append(f"{d.rel} is {-(-d.bytes // 1024)} KB (limit {FILE_WARN_BYTES // 1024}) → split by summary or trim")
     return out
@@ -340,6 +373,34 @@ def newest_header(journal: grammar.Journal) -> Optional[str]:
     return f"{e.date} {e.time} · {e.phase} ({n} event{'' if n == 1 else 's'})"
 
 
+# ---- broken links: a link that points at nothing is a map that lies ---------------------------------
+def broken_links(case: Path, folders: List[Folder], readme_body: str, todo_body: str) -> List[Tuple[str, str]]:
+    """(file, target) for every relative markdown link whose target does not exist — in README and
+    TODO bodies, the phase files and the content folders. The journal is history and is not checked;
+    a moved file keeps its links alive through `mike mv` (feedback 2026-09-03)."""
+    out: List[Tuple[str, str]] = []
+
+    def scan(rel: str, text: str, base: Path):
+        for m in LINK_RE.finditer(text):
+            target = m.group(2)
+            if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith("#"):
+                continue
+            path = target.partition("#")[0]
+            if path and not (base / path).exists():
+                out.append((rel, path))
+
+    scan("README.md", readme_body, case)
+    scan("TODO.md", todo_body, case)
+    ph = phases_folder(case)
+    docs = [d for f in folders for d in f.all_docs()] + (ph.docs if ph else [])
+    for d in docs:
+        try:
+            scan(d.rel, d.path.read_text(encoding="utf-8", errors="ignore"), d.path.parent)
+        except OSError:
+            continue
+    return out
+
+
 # ---- the report shown on every entry (P12) ------------------------------------------------------
 def report(case: Path, root_mode: bool, readme_body: str, journal: Optional[grammar.Journal],
            links_lines: List[str]) -> List[str]:
@@ -364,7 +425,7 @@ def report(case: Path, root_mode: bool, readme_body: str, journal: Optional[gram
             if r or p:
                 out.append(f"State is behind: {n} journal entr{'y' if n == 1 else 'ies'} touched since as of {key[0]} {key[1]} "
                            f"({r} RESULT, {p} PHASE) → mike readme set next \"…\" · or mike readme --file README.md")
-    missing = [d.rel for f in folders for d in f.docs if not d.summary]
+    missing = [d.rel for f in folders for d in f.all_docs() if not d.summary]
     if missing:
         shown = ", ".join(missing[:4]) + (f" … +{len(missing) - 4}" if len(missing) > 4 else "")
         out.append(f"{len(missing)} file(s) without `summary:` — {shown} → add `summary: one line` as line 2, "
@@ -377,4 +438,13 @@ def report(case: Path, root_mode: bool, readme_body: str, journal: Optional[gram
         out.append(f"{small} ≈ {other}: {int(share * 100)} % of {small.rsplit('/', 1)[-1]}'s text is verbatim in "
                    f"{other.rsplit('/', 1)[-1]} → say the difference in each summary, or merge")
     out.extend(budgets(folders))
+    try:
+        from . import store, stamp  # local: store imports order for the README render
+        todo_body = stamp.split(store.read(case, "TODO.md"))[0]
+    except Exception:  # noqa: BLE001 — no TODO, no links to check there
+        todo_body = ""
+    broken = broken_links(case, folders, readme_body, todo_body)
+    if broken:
+        shown = ", ".join(f"{f} → {t}" for f, t in broken[:4]) + (f" … +{len(broken) - 4}" if len(broken) > 4 else "")
+        out.append(f"{len(broken)} broken link(s): {shown} → fix the link, or move files with `mike mv old new` (links follow)")
     return out

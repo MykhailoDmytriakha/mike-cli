@@ -47,13 +47,18 @@ happened. Now the lower layer is visible from the top, and the top is rendered f
   step, what we wait for) · Decisions · Problems (open only) · Links. Always current, stale lines
   are removed, not kept. Written via `mike readme`.
 - TODO.md — phases only: `- [ ] N Name` with items `N.M`; a closed phase collapses to one summary
-  line. Written via `mike todo` / `mike phase`.
+  line. Written via `mike todo` / `mike phase`. An item's number is for life: drop and move never
+  renumber (move puts N.M before N.K, or `last`), a new item takes the next free number — so a
+  batch of commands aimed at numbers you just read stays correct; gaps in the numbers are normal.
 - JOURNAL.md — history, newest on top, a report for the owner who was not in the session. Written
   via `mike log`.
 - Everything else lives in folders by KIND of content: phases/ research/ scripts/ docs/ logs/
   meetings/ data/ … (English lowercase names, created with their first file). Each .md file there
   starts with `summary: <one line>` under its title (F14); README Links is rendered by mike: your
   folder line (`- docs/ — что здесь`) with the files nested under it, described by their summaries.
+  Sub-folders (docs/notes/ …) render one level deeper, each file by its own summary; their line
+  `- docs/notes/ — …` is yours and optional. A line you wrote for a file mike does not render
+  (outside the content folders) stays as written — nothing in Links is dropped silently.
   Recipes are NOT per-case: they go to the project-root .howto/.
 - README State carries lines mike owns: `progress:` (from TODO), `last:` (newest RESULT),
   `as of:` (the journal entry State was last rewritten against, S5). Yours: next, ждёт, срок …""",
@@ -68,6 +73,21 @@ PROBLEM (problem → root cause → fix) · RESULT (measurement, number, verdict
 - No open phase? The entry lands in p0 — the case-level lane (gathering info, talking it over).
 - `--phase p1`, `--phase 1` or a unique phase name select the phase explicitly.
 - Long text is split automatically into a headline + body lines; keep headlines meaningful.""",
+
+    "todo": """todo items — `mike todo <action> N.M …`
+- add N "text" · done N.M · edit N.M "text" · drop N.M · hold N.M "why" / resume N.M.
+- numbers are for life: drop, hold and move never renumber; a new item takes the next free number,
+  gaps are normal. `move N.M N.K` puts the item before N.K, `move N.M last` — last; `move N.M K`
+  (a bare phase number) sends it to the end of phase K under a new number there.
+- cancel N.M "why" — the item stopped being needed: it leaves TODO and the reason goes to the
+  journal as `DECISION · снято …`. Not `done` (that would say it was completed), not `drop`
+  (that says nothing).
+- dates: end the text with `— due: YYYY-MM-DD` (add/edit) or `mike todo due N.M YYYY-MM-DD`
+  (`none` clears). The case deadline is a State line: `mike readme set due "2026-09-13 · what"`.
+  On entry `mike` prints `dates: today … · due today · next 7 days · overdue · deadline in N days`;
+  an overdue item is an Order line with its three exits: done · due <date> · cancel "why".
+- a live project re-cuts itself often: plan the next phase (`mike phase plan`), move items across
+  phases, cancel what died, move files with `mike mv old new` (links follow the file).""",
 
     "phases": """phases — `mike phase plan|open|close N "Name"`
 - plan: `mike phase plan 3 "Rollout" --goal "one line"` — names the NEXT phase while the current one
@@ -107,6 +127,11 @@ PROBLEM (problem → root cause → fix) · RESULT (measurement, number, verdict
 - finished for today                     → `mike` → Order says "State is behind"? rewrite State
 - closed a phase                        → `mike phase close N "…"` (does TODO+journal+README itself)
 - took a measurement                    → `mike log RESULT "…"` + the number in README State
+- a piece of work has a date            → `— due: YYYY-MM-DD` at the end of the item; the case
+                                          deadline → `mike readme set due "YYYY-MM-DD · what"`
+- an item is no longer needed           → `mike todo cancel N.M "why"` (not done, not drop)
+- a file moves or gets renamed          → `mike mv old new` — links in README/TODO/JOURNAL and
+                                          the documents are rewritten; Order names broken links
 - cause unknown or work too big         → `mike spawn` — a nested case
 - mike itself misbehaves                → `mike feedback "title" --actual … --expected …`""",
 

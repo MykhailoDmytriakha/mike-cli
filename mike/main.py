@@ -11,7 +11,11 @@ EXAMPLES = """examples
   mike log DECISION "chose X over Y because Z"
   mike log RESULT "p95 dropped 120 → 48 ms"
   mike todo add 3 "write the parser"      mike todo done 3.1
-  mike todo edit 3.1 "new text" · mike todo move 3.7 3.2 · mike todo drop 3.4
+  mike todo edit 3.1 "new text" · mike todo move 3.7 3.2 (before 3.2; or `last`) · mike todo drop 3.4   numbers never change
+  mike todo add 3 "send the material — due: 2026-09-09" · mike todo due 3.2 2026-09-12 · mike todo cancel 3.5 "no longer needed"
+  mike todo move 3.6 4                    to another phase (joins its end under the next free number)
+  mike readme set due "2026-09-13 · decision meeting"   the case deadline — `mike` counts the days on entry
+  mike mv docs/old.md docs/notes/new.md   move a file; every link to it is rewritten (README/TODO/JOURNAL and the documents)
   mike todo hold 3.2 "ждём ответа заказчика" · mike todo resume 3.2
   mike readme set next "call the customer" · mike readme add links "docs/contacts.md — кто есть кто"
   mike phase open 3 "CLI core" --goal "single write door with tests"
@@ -49,10 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("text")
     s.add_argument("--phase", help="p1, 1 or a unique phase name (default: the open phase); e.g. `mike log --phase p1 DECISION \"…\"`")
 
-    s = sub.add_parser("todo", help="add · done · edit · move · drop items", allow_abbrev=False)
-    s.add_argument("action", choices=["add", "done", "edit", "move", "drop", "hold", "resume"])
+    s = sub.add_parser("todo", help="add · done · edit · move · drop · hold · resume items — N.M is an item's number for life: drop and move never renumber", allow_abbrev=False)
+    s.add_argument("action", choices=["add", "done", "edit", "move", "drop", "hold", "resume", "cancel", "due"])
     s.add_argument("ref", help="phase number for add (N), item for the rest (N.M)")
-    s.add_argument("text", nargs="?", default="", help="text for add/edit, target position N.K for move")
+    s.add_argument("text", nargs="?", default="", help="text for add/edit (may end with `— due: YYYY-MM-DD`); for move: N.K (before K), `last`, or a phase number K; for cancel: why; for due: YYYY-MM-DD or none")
 
     s = sub.add_parser("phase", help="plan · open · close a phase (plan = name the next one without opening it; close needs RESULT, reflect:, align:)", allow_abbrev=False)
     s.add_argument("action", choices=["plan", "open", "close"])
@@ -71,6 +75,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("name", nargs="?")
     s.add_argument("--goal")
     s.add_argument("--root", action="store_true", help="root mode: the project folder itself becomes the top case")
+
+    s = sub.add_parser("mv", help="move/rename a file inside the case; every link to it is rewritten", allow_abbrev=False)
+    s.add_argument("old", help="current path, relative to the case (docs/x.md)")
+    s.add_argument("new", help="new path or folder (docs/notes/ or docs/notes/y.md)")
 
     s = sub.add_parser("spawn", help="open a nested case inside the case in hand (P11)", allow_abbrev=False)
     s.add_argument("name")
@@ -166,6 +174,10 @@ def run(argv=None) -> int:
                     out = commands.todo_hold(case, args.ref, args.text)
                 elif args.action == "resume":
                     out = commands.todo_resume(case, args.ref)
+                elif args.action == "cancel":
+                    out = commands.todo_cancel(case, args.ref, args.text)
+                elif args.action == "due":
+                    out = commands.todo_due(case, args.ref, args.text)
                 else:
                     out = commands.todo_drop(case, args.ref)
             elif args.cmd == "phase":
@@ -199,6 +211,8 @@ def run(argv=None) -> int:
                 out = commands.order_cmd(root, case, args.adopt)
             elif args.cmd == "migrate":
                 out = commands.migrate_cmd(case, args.apply)
+            elif args.cmd == "mv":
+                out = commands.mv(case, args.old, args.new)
             elif args.cmd == "spawn":
                 out = commands.spawn(root, case, args.name, args.goal)
             elif args.cmd == "done":

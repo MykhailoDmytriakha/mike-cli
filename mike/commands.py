@@ -60,7 +60,7 @@ def render_todo(todo: grammar.Todo) -> str:
         out.append(head)
         for it in [i for i in p.items if not i.held] + [i for i in p.items if i.held]:
             mark = "x" if it.done else ("~" if it.held else " ")
-            suffix = f" — hold: {it.hold_reason}" if it.held and it.hold_reason else ""
+            suffix = (f" — due: {it.due}" if it.due else "") + (f" — hold: {it.hold_reason}" if it.held and it.hold_reason else "")
             out.append(f"  - [{mark}] {it.n}.{it.m} {it.text}{suffix}")
         for w in p.waits:
             out.append(f"  - waits: {w}")
@@ -352,8 +352,29 @@ def todo_done(case: Path, ref: str) -> Outcome:
     return out
 
 
+def _split_due(text: str):
+    """`text — due: YYYY-MM-DD` → (text, date). A date the tool can parse is a date it can count
+    (feedback 2026-09-03: dates written inside the text were invisible — no today, no overdue)."""
+    text = " ".join(text.split())
+    if " — due: " not in text:
+        return text, ""
+    text, due = text.rsplit(" — due: ", 1)
+    return text.strip(), _valid_date(due.strip())
+
+
+def _valid_date(due: str) -> str:
+    if not grammar.DATE_RE.fullmatch(due):
+        raise StoreError(f"`due:` must be YYYY-MM-DD, got `{due}` — e.g. `— due: 2026-09-13`", 2)
+    try:
+        dt.date.fromisoformat(due)
+    except ValueError:
+        raise StoreError(f"`{due}` is not a calendar date", 2)
+    return due
+
+
 def todo_add(case: Path, ref: str, text: str) -> Outcome:
-    """Add item N.M (M = next free) to an open phase N; `ref` is the phase number."""
+    """Add item N.M (M = next free) to an open or planned phase N; `ref` is the phase number.
+    The text may end with `— due: YYYY-MM-DD`."""
     out = Outcome()
     if not ref.isdigit():
         raise StoreError("use `mike todo add N \"text\"` — N is the phase number", 2)
@@ -361,15 +382,15 @@ def todo_add(case: Path, ref: str, text: str) -> Outcome:
     phase = todo.phase(int(ref))
     if phase is None or phase.done:
         raise StoreError(f"phase {ref} is missing or closed", 4)
-    text = " ".join(text.split())
+    text, due = _split_due(text)
     if grammar.visible_len(text) > grammar.TODO_ITEM_CHARS:
         raise StoreError(f"item text is {grammar.visible_len(text)} visible chars, limit {grammar.TODO_ITEM_CHARS} (F13); "
                          f"markdown links count as their name\n"
                          f"  suggestion: \"{_trim_suggestion(text, grammar.TODO_ITEM_CHARS)}\"", 3)
     m = max((it.m for it in phase.items), default=0) + 1
-    phase.items.append(grammar.Item(phase.n, m, False, text, 0))
+    phase.items.append(grammar.Item(phase.n, m, False, text, 0, due=due))
     out.absorb(store.write(case, "TODO.md", render_todo(todo)))
-    out.say(f"added: {phase.n}.{m} {text} → TODO.md")
+    out.say(f"added: {phase.n}.{m} {text}{f' — due: {due}' if due else ''} → TODO.md")
     return out
 
 
@@ -390,40 +411,79 @@ def todo_edit(case: Path, ref: str, text: str) -> Outcome:
     out = Outcome()
     todo = _todo(case, out)
     phase, item = _find_item(todo, ref)
-    text = " ".join(text.split())
+    text, due = _split_due(text)  # a date kept in the item stays unless the new text carries one
     if grammar.visible_len(text) > grammar.TODO_ITEM_CHARS:
         raise StoreError(f"item text is {grammar.visible_len(text)} visible chars, limit {grammar.TODO_ITEM_CHARS} (F13)\n"
                          f"  suggestion: \"{_trim_suggestion(text, grammar.TODO_ITEM_CHARS)}\"", 3)
     old_text, item.text = item.text, text
+    if due:
+        item.due = due
     out.absorb(store.write(case, "TODO.md", render_todo(todo)))
     out.say(f"edited: {ref} → TODO.md (was: «{old_text}»)")
     return out
 
 
+def _list_lines(phase: grammar.Phase) -> List[str]:
+    """The phase as TODO renders it — active items in order, held ones last."""
+    items = [i for i in phase.items if not i.held] + [i for i in phase.items if i.held]
+    return [f"  - [{'x' if it.done else ('~' if it.held else ' ')}] {it.n}.{it.m} {it.text}" for it in items]
+
+
+def _number_ranges(phase: grammar.Phase) -> str:
+    """`2.1–2.6, 2.8, 2.17` — which numbers the phase holds now (gaps are normal: numbers are kept)."""
+    ms = sorted(it.m for it in phase.items)
+    parts, i = [], 0
+    while i < len(ms):
+        j = i
+        while j + 1 < len(ms) and ms[j + 1] == ms[j] + 1:
+            j += 1
+        parts.append(f"{phase.n}.{ms[i]}" if i == j else f"{phase.n}.{ms[i]}–{phase.n}.{ms[j]}")
+        i = j + 1
+    return ", ".join(parts) or "(empty)"
+
+
 def todo_move(case: Path, ref: str, to: str) -> Outcome:
+    """Put item N.M before item N.K, or `last`. Numbers never change: N.M is the item's number for
+    life and the list order is a separate thing, so a batch aimed at numbers read a moment ago stays
+    correct (feedback 2026-09-03: move renumbered while drop did not — two rules for one list, and
+    an edit landed on the wrong item). No clamping either: an unknown target is refused."""
     out = Outcome()
     todo = _todo(case, out)
     phase, item = _find_item(todo, ref)
-    m = re.fullmatch(r"(\d+)\.(\d+)", to)
-    if not m or int(m.group(1)) != phase.n:
-        raise StoreError(f"move works inside one phase: `mike todo move {phase.n}.M {phase.n}.K`; "
-                         f"to another phase — drop and add", 2)
-    k, last = int(m.group(2)), len(phase.items)
-    if not 1 <= k <= last:
-        # never clamp: moves come in batches from numbers read a moment ago, and a silent "placed
-        # last" reads like success while the order is wrong (feedback 2026-09-03: 2.37 in a 24-item phase)
-        raise StoreError(f"phase {phase.n} has items {phase.n}.1–{phase.n}.{last} — there is no {to}; "
-                         f"to put it last: mike todo move {ref} {phase.n}.{last}", 2)
+    if to.strip().isdigit():
+        # to another phase: the item joins its end under the next free number there — the one time a
+        # number changes, said aloud (feedback 2026-09-03: re-cutting a phase meant drop + add × 15)
+        dest = todo.phase(int(to))
+        if dest is None or dest.done:
+            raise StoreError(f"phase {to} is missing or closed — plan it first: mike phase plan {to} \"Name\"", 4)
+        if dest is phase:
+            out.say(f"{ref} is already in phase {to} — nothing changed")
+            return out
+        phase.items.remove(item)
+        item.n, item.m = dest.n, max((it.m for it in dest.items), default=0) + 1
+        dest.items.append(item)
+        out.absorb(store.write(case, "TODO.md", render_todo(todo)))
+        out.say(f"moved: {ref} → {item.n}.{item.m} «{item.text}» (end of phase {dest.n}; the number changes with the phase)")
+        return out
+    if to.strip().lower() in ("last", "end"):
+        target = None
+    else:
+        m = re.fullmatch(r"(\d+)\.(\d+)", to)
+        if not m or int(m.group(1)) != phase.n:
+            raise StoreError(f"move works inside one phase: `mike todo move {phase.n}.M {phase.n}.K` (before K) "
+                             f"or `mike todo move {phase.n}.M last`; to another phase — drop and add", 2)
+        target = next((it for it in phase.items if it.m == int(m.group(2))), None)
+        if target is None:
+            raise StoreError(f"no item {to} in phase {phase.n} (items: {_number_ranges(phase)}); "
+                             f"to put it last: mike todo move {ref} last", 4)
+        if target is item:
+            out.say(f"{ref} is already there — nothing changed")
+            return out
     phase.items.remove(item)
-    phase.items.insert(k - 1, item)
-    renumbered = any(it.m != idx for idx, it in enumerate(phase.items, start=1))
-    for idx, it in enumerate(phase.items, start=1):  # positions become contiguous
-        it.m = idx
+    phase.items.insert(len(phase.items) if target is None else phase.items.index(target), item)
     out.absorb(store.write(case, "TODO.md", render_todo(todo)))
-    if renumbered:
-        out.say(f"numbers of phase {phase.n} recounted — older N.M references in the journal go by text")
-    out.say(f"moved: item now at {phase.n}.{item.m}; the phase list:", *(
-        f"  - [{'x' if it.done else ' '}] {it.n}.{it.m} {it.text}" for it in phase.items))
+    where = "last" if target is None else f"before {phase.n}.{target.m}"
+    out.say(f"moved: {ref} now {where} — numbers never change; the phase list:", *_list_lines(phase))
     return out
 
 
@@ -458,7 +518,44 @@ def todo_drop(case: Path, ref: str) -> Outcome:
     phase, item = _find_item(todo, ref)
     phase.items.remove(item)
     out.absorb(store.write(case, "TODO.md", render_todo(todo)))
-    out.say(f"dropped: {ref} «{item.text}» (git keeps the history; a decision behind it → mike log DECISION)")
+    # the numbers of the others are kept (N.M is for life) — and said aloud, so the next command in a
+    # batch is aimed at a number the caller has just been shown (feedback 2026-09-03)
+    out.say(f"dropped: {ref} «{item.text}» — numbers kept, phase {phase.n} now reads {_number_ranges(phase)} "
+            f"(git keeps the history; a decision behind it → mike log DECISION)")
+    return out
+
+
+def todo_cancel(case: Path, ref: str, why: str) -> Outcome:
+    """The item stopped being needed (not done, not dropped by mistake): it leaves TODO — the list is
+    what remains to do (P4) — and the reason goes to the journal as a DECISION, so the record stays
+    honest (feedback 2026-09-03: `edit` + `done` wrote "completed" over work that was cancelled)."""
+    out = Outcome()
+    why = " ".join(why.split())
+    if not why:
+        raise StoreError("cancel needs a reason: `mike todo cancel N.M \"why it is no longer needed\"`", 2)
+    todo = _todo(case, out)
+    phase, item = _find_item(todo, ref)
+    phase.items.remove(item)
+    out.absorb(store.write(case, "TODO.md", render_todo(todo)))
+    out.lines += log(case, "DECISION", f"снято {ref} «{item.text}» — {why}", f"p{phase.n}").lines
+    out.say(f"cancelled: {ref} «{item.text}» — out of TODO, the reason is in the journal; phase {phase.n} now reads {_number_ranges(phase)}")
+    return out
+
+
+def todo_due(case: Path, ref: str, date: str) -> Outcome:
+    """Set or clear (`none`) the date of an item: `— due: YYYY-MM-DD` — the tool counts it on entry."""
+    out = Outcome()
+    todo = _todo(case, out)
+    phase, item = _find_item(todo, ref)
+    date = date.strip().lower()
+    if date in ("", "none", "-", "clear"):
+        item.due = ""
+        out.absorb(store.write(case, "TODO.md", render_todo(todo)))
+        out.say(f"due cleared: {ref} {item.text}")
+        return out
+    item.due = _valid_date(date)
+    out.absorb(store.write(case, "TODO.md", render_todo(todo)))
+    out.say(f"due: {ref} {item.text} — {item.due} → TODO.md")
     return out
 
 
@@ -919,6 +1016,155 @@ def feedback(title: str, expected: str, actual: str, why: str, acceptance: str, 
     return out
 
 
+# ---- mv: a file moves, its links follow -----------------------------------------------------------
+def _rewrite_links(text: str, base: Path, src: Path, dst: Path, new_base: Optional[Path] = None):
+    """Markdown link targets in `text` (a file living in `base`) that resolve to `src` now point at
+    `dst`; when the file itself moves (`new_base`), every relative target is re-based as well.
+    Returns (text, number of links rewritten). URLs and anchors are left alone."""
+    import os
+    count = 0
+
+    def fix(m):
+        nonlocal count
+        target = m.group(2)
+        if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith("#"):
+            return m.group(0)
+        path, _, anchor = target.partition("#")
+        resolved = (base / path).resolve()
+        if resolved == src.resolve():
+            new = os.path.relpath(dst, new_base or base)
+        elif new_base is not None and new_base != base:
+            new = os.path.relpath(resolved, new_base)
+        else:
+            return m.group(0)
+        if new == path:
+            return m.group(0)
+        count += 1
+        return f"{m.group(1)}{new}{'#' + anchor if anchor else ''}{m.group(3)}"
+
+    return order.LINK_RE.sub(fix, text), count
+
+
+def mv(case: Path, old: str, new: str) -> Outcome:
+    """Move or rename a file inside the case and rewrite every markdown link to it — in the three
+    owned files (through the stamp door) and in the case's own documents — so the map stays true
+    (feedback 2026-09-03: one folder split broke 33 links, found only by a hand-written checker).
+    An action, not an event: git keeps the history."""
+    out = Outcome()
+    src = (case / old)
+    if not src.is_file():
+        raise StoreError(f"{old} is not a file in the case (paths are relative to the case: docs/x.md)", 4)
+    if src.name in store.FILES and src.parent == case:
+        raise StoreError(f"{src.name} is one of the three case files — it does not move (L3)", 2)
+    dst = case / new
+    if new.endswith("/") or dst.is_dir():
+        dst = dst / src.name
+    for p in (src, dst):
+        if case.resolve() not in p.resolve().parents:
+            raise StoreError("mv works inside the case folder only", 2)
+    if dst.exists():
+        raise StoreError(f"{dst.relative_to(case)} already exists — mv never overwrites", 4)
+    old_rel, new_rel = src.relative_to(case).as_posix(), dst.relative_to(case).as_posix()
+    touched: List[str] = []
+    # 1. the moved file's own links follow it
+    body, n = _rewrite_links(src.read_text(encoding="utf-8"), src.parent, src, dst, new_base=dst.parent)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(body, encoding="utf-8")
+    src.unlink()
+    if n:
+        touched.append(f"{new_rel} ({n} of its own)")
+    # 2. the three owned files: links and `old/path` pointers, written through the stamp door;
+    #    README last, so its derived lines (`last:` from the journal) see the rewritten journal
+    for name in ("JOURNAL.md", "TODO.md", "README.md"):
+        p = store.file_path(case, name)
+        if not p.exists():
+            continue
+        text, _ = stamp.split(store.read(case, name))
+        new_text, n = _rewrite_links(text, case, src, dst)
+        k = new_text.count(f"`{old_rel}`")
+        new_text = new_text.replace(f"`{old_rel}`", f"`{new_rel}`")
+        if new_text != text:
+            if name == "README.md":
+                _write_readme(case, new_text, out)
+            else:
+                out.absorb(store.write(case, name, new_text))
+            touched.append(f"{name} ({n + k})")
+    # 3. every other markdown file of the case (documents, phase files), never the legacy archive
+    for p in sorted(case.rglob("*.md")):
+        rel = p.relative_to(case)
+        if p == dst or any(part.startswith(".") or part in ("node_modules", "legacy") for part in rel.parts):
+            continue
+        if rel.parts[0] == store.CASES_DIR or any(store.is_case_dir(case / Path(*rel.parts[:i + 1])) for i in range(len(rel.parts) - 1)):
+            continue
+        if p.parent == case and p.name in store.FILES:
+            continue
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        new_text, n = _rewrite_links(text, p.parent, src, dst)
+        if n:
+            p.write_text(new_text, encoding="utf-8")
+            touched.append(f"{rel.as_posix()} ({n})")
+    if "README.md" not in " ".join(touched):
+        _refresh_readme(case, out)  # Links follow the files
+    out.say(f"moved: {old_rel} → {new_rel}" + (f" · links rewritten: {', '.join(touched)}" if touched else " · no links pointed at it"))
+    return out
+
+
+# ---- dates: what the tool can count -----------------------------------------------------------------
+STATE_DUE_RE = re.compile(r"^- due: (\d{4}-\d{2}-\d{2})(?:\s*[·—–-]?\s*(.*))?$", re.M)
+
+
+def _dated(todo: grammar.Todo, readme_body: str, today: dt.date):
+    """(overdue, due today, next 7 days, deadline) — from `— due:` items of open phases and the
+    State line `- due: YYYY-MM-DD · what` (the case deadline). Held and done items do not count."""
+    items = []
+    for p in todo.phases:
+        if p.done:
+            continue
+        for it in p.items:
+            if it.due and not it.done and not it.held:
+                try:
+                    items.append((it, dt.date.fromisoformat(it.due)))
+                except ValueError:
+                    continue
+    overdue = [(it, d) for it, d in items if d < today]
+    due_today = [it for it, d in items if d == today]
+    week = [(it, d) for it, d in items if today < d <= today + dt.timedelta(days=7)]
+    deadline = None
+    m = STATE_DUE_RE.search(readme_body)
+    if m:
+        try:
+            deadline = (dt.date.fromisoformat(m.group(1)), (m.group(2) or "").strip())
+        except ValueError:
+            deadline = None
+    return overdue, due_today, week, deadline
+
+
+def _dates_line(todo: grammar.Todo, readme_body: str) -> Optional[str]:
+    today = dt.date.today()
+    overdue, due_today, week, deadline = _dated(todo, readme_body, today)
+    if not (overdue or due_today or week or deadline):
+        return None
+    parts = [f"today {today.isoformat()}"]
+    if due_today:
+        parts.append("due today: " + ", ".join(f"{it.n}.{it.m} «{it.text}»" for it in due_today))
+    if week:
+        parts.append("next 7 days: " + ", ".join(f"{it.n}.{it.m} ({d.isoformat()[5:]})" for it, d in week))
+    if overdue:
+        parts.append(f"overdue: {len(overdue)} — see Order")
+    if deadline:
+        d, what = deadline
+        days = (d - today).days
+        when = "today" if days == 0 else (f"in {days} day{'s' if days != 1 else ''}" if days > 0 else f"{-days} day{'s' if days != -1 else ''} ago")
+        parts.append(f"deadline {d.isoformat()}{f' «{what}»' if what else ''} {when}")
+    return "dates: " + " · ".join(parts)
+
+
+def _overdue_lines(todo: grammar.Todo, readme_body: str) -> List[str]:
+    overdue = _dated(todo, readme_body, dt.date.today())[0]
+    return [f"overdue: {it.n}.{it.m} «{it.text}» was due {d.isoformat()} → mike todo done {it.n}.{it.m} · "
+            f"mike todo due {it.n}.{it.m} <date> · mike todo cancel {it.n}.{it.m} \"why\"" for it, d in overdue]
+
+
 # ---- entry, order and check ---------------------------------------------------------------------
 def _journal_headlines(journal: grammar.Journal, limit: int) -> List[str]:
     """The last `limit` entries as headlines only: no body lines, no legacy tool noise
@@ -953,6 +1199,10 @@ def _order_lines(case: Path, root: Path, readme_body: str, journal: Optional[gra
     parsed = grammar.parse_readme(readme_body)
     links = parsed.sections.get("Links", []) if not parsed.errors else []
     lines = order.report(case, _is_project(case), readme_body, journal, links)
+    try:
+        lines.extend(_overdue_lines(store.todo_of(case), readme_body))  # a date that passed is out of order
+    except StoreError:
+        pass
     legacy = store.legacy_files(case)
     if legacy:
         lines.insert(0, f"legacy file(s) outside mike's grammar, never stamped: {', '.join(n for n, _ in legacy)} → "
@@ -984,8 +1234,12 @@ def entry(root: Path, case: Path) -> Outcome:
     if others:
         out.say("other open cases: " + " · ".join(others) + " — switch: `mike case use <name>`", "")
     readme_body = _refresh_readme(case, out)
-    out.say(readme_body.rstrip("\n"), "")
     todo_body, _ = stamp.split(store.read(case, "TODO.md"))
+    todo = grammar.parse_todo(todo_body)
+    dates = _dates_line(todo, readme_body) if not todo.errors else None
+    if dates:
+        out.say(dates, "")  # what the tool can count: due today, this week, overdue, the deadline
+    out.say(readme_body.rstrip("\n"), "")
     out.say(todo_body.rstrip("\n"), "")
     journal = grammar.parse_journal(store.read(case, "JOURNAL.md"))
     if journal.entries:

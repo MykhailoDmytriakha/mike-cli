@@ -181,6 +181,7 @@ class Item:
     line: int
     held: bool = False
     hold_reason: str = ""
+    due: str = ""        # YYYY-MM-DD from the `— due: …` suffix; the tool counts dates it can parse
 
 
 @dataclass
@@ -246,16 +247,21 @@ def parse_todo(text: str) -> Todo:
                 r.error("F4", i, "item before any phase")
                 continue
             mark, n, k, txt = m.group(1), int(m.group(2)), int(m.group(3)), m.group(4).strip()
-            held, reason = mark == "~", ""
+            held, reason, due = mark == "~", "", ""
             if held and " — hold: " in txt:
                 txt, reason = txt.rsplit(" — hold: ", 1)
+            if " — due: " in txt:
+                txt, due = txt.rsplit(" — due: ", 1)
+                due = due.strip()
+                if not DATE_RE.fullmatch(due):
+                    r.error("F4", i, f"item {n}.{k}: `due:` must be YYYY-MM-DD, got `{due}`")
             if n != phase.n:
                 r.error("F4", i, f"item {n}.{k} listed under phase {phase.n}")
             if visible_len(txt) > TODO_ITEM_CHARS:
                 r.error("F13", i, f"item {n}.{k} text is {visible_len(txt)} visible chars, limit {TODO_ITEM_CHARS}")
             if phase.done:
                 r.error("F5", i, f"closed phase {phase.n} still lists items — they belong in the phase file")
-            phase.items.append(Item(n, k, mark == "x", txt, i, held, reason))
+            phase.items.append(Item(n, k, mark == "x", txt, i, held, reason, due))
             continue
         m = WAITS_RE.match(raw)
         if m:

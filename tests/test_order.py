@@ -91,6 +91,31 @@ class Summaries(Base):
         code, out, err = run()
         self.assertIn("  - [1-work.md](phases/1-work.md) — g", self.readme())
 
+    def test_subfolders_render_nested_and_manual_nested_lines_survive(self):
+        # feedback 2026-09-03: sub-folders collapsed into `other: notes/ 4 file(s)` and the lines the
+        # agent added for their files were dropped on the next render after `line added`
+        self.doc("docs/top.md", "# T\nsummary: верх\n")
+        self.doc("docs/notes/a.md", "# A\nsummary: первый\n")
+        self.doc("docs/notes/b.md", "# B\n\nno summary\n")
+        self.doc("docs/notes/img.png", "x")
+        run("readme", "add", "links", "docs/ — документы")
+        run("readme", "add", "links", "[b.md](docs/notes/b.md) — описание из Links")
+        code, out, err = run()
+        self.assertEqual(code, 0, err)
+        self.assertIn("- docs/ — документы\n  - [top.md](docs/top.md) — верх\n  - docs/notes/\n"
+                      "    - [a.md](docs/notes/a.md) — первый\n    - [b.md](docs/notes/b.md) — описание из Links\n"
+                      "    - other: img.png", self.readme())
+        self.assertNotIn("other: notes/", self.readme())
+        self.assertIn("1 file(s) without `summary:` — docs/notes/b.md", out)
+        run("readme", "add", "links", "docs/notes/ — заметки")
+        run()
+        self.assertIn("  - docs/notes/ — заметки\n    - [a.md]", self.readme())
+        code, out, err = run("order", "--adopt")
+        self.assertEqual((self.case / "docs/notes/b.md").read_text().split("\n")[1], "summary: описание из Links")
+        run()
+        self.assertEqual(self.readme().count("docs/notes/"), 3, "folder line + two files, no duplicated manual line")
+        self.assertNotIn("without `summary:`", run()[1], "after adopt every nested file describes itself")
+
 
 class Duplicates(Base):
     """F15 duplicate = verbatim phrasing (word 3-grams of the smaller file found in the other), not
@@ -261,6 +286,11 @@ class RootMode(unittest.TestCase):
             self.assertNotIn("src/notes.md", out)
             self.assertNotIn(".cases/RULES.md", out, "root mode: .cases/ is empty, the pointer must not name it")
             self.assertIn("rules: mike help files · order · limits", out)
+            # a line the agent wrote for a file mike does not render must survive every render
+            run("readme", "add", "links", "[notes.md](src/notes.md) — заметки к коду")
+            run()
+            run()
+            self.assertEqual((project / "README.md").read_text().count("- [notes.md](src/notes.md) — заметки к коду"), 1)
         finally:
             os.chdir(old)
             tmp.cleanup()
