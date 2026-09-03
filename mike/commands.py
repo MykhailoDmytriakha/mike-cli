@@ -408,9 +408,14 @@ def todo_move(case: Path, ref: str, to: str) -> Outcome:
     if not m or int(m.group(1)) != phase.n:
         raise StoreError(f"move works inside one phase: `mike todo move {phase.n}.M {phase.n}.K`; "
                          f"to another phase — drop and add", 2)
-    k = int(m.group(2))
+    k, last = int(m.group(2)), len(phase.items)
+    if not 1 <= k <= last:
+        # never clamp: moves come in batches from numbers read a moment ago, and a silent "placed
+        # last" reads like success while the order is wrong (feedback 2026-09-03: 2.37 in a 24-item phase)
+        raise StoreError(f"phase {phase.n} has items {phase.n}.1–{phase.n}.{last} — there is no {to}; "
+                         f"to put it last: mike todo move {ref} {phase.n}.{last}", 2)
     phase.items.remove(item)
-    phase.items.insert(max(0, min(k - 1, len(phase.items))), item)
+    phase.items.insert(k - 1, item)
     renumbered = any(it.m != idx for idx, it in enumerate(phase.items, start=1))
     for idx, it in enumerate(phase.items, start=1):  # positions become contiguous
         it.m = idx
@@ -490,12 +495,43 @@ def _closing_checks(case: Path, prev: grammar.Phase, journal: grammar.Journal) -
     return missing
 
 
-def phase_open(case: Path, n: int, name: str, goal: Optional[str]) -> Outcome:
+def phase_plan(case: Path, n: int, name: str, goal: Optional[str]) -> Outcome:
+    """Name the next phase now, open it later: `- [ ] N Name — <intent>` in TODO, no phase file, no
+    journal event (a plan is not an event, P5). Items may be parked under it (`todo add N`); it
+    opens with `mike phase open N` once the previous phase is closed — P8 stays: planned ≠ open.
+    Feedback 2026-09-03: a dated deadline outside the current phase had nowhere to live in TODO."""
     out = Outcome()
     if not grammar.PHASE_NAME_RE.match(name):
         raise StoreError(f"phase name `{name}` must be English, 1–3 words (F13)", 2)
     todo = _todo(case, out)
     existing = todo.phase(n)
+    if existing is not None:
+        state = "closed" if existing.done else ("open" if _phase_file(case, n, existing.name).exists() else "already planned")
+        free = max(p.n for p in todo.phases) + 1
+        raise StoreError(f"phase {n} {existing.name} exists ({state}) — pick the next number: mike phase plan {free} \"{name}\"", 4)
+    intent = " ".join(goal.split()) if goal else None
+    if intent and grammar.visible_len(intent) > grammar.TODO_ITEM_CHARS:
+        raise StoreError(f"intent is {grammar.visible_len(intent)} visible chars, limit {grammar.TODO_ITEM_CHARS} — one line in TODO (F13); "
+                         f"the story goes into the phase file once it opens\n"
+                         f"  suggestion: \"{_trim_suggestion(intent, grammar.TODO_ITEM_CHARS)}\"", 3)
+    todo.phases.append(grammar.Phase(n, name, False, 0, intent))
+    out.absorb(store.write(case, "TODO.md", render_todo(todo)))
+    _sync_progress(case, todo, out)
+    out.say(f"planned: phase {n} {name} → TODO.md (no phase file until it opens) · items now: mike todo add {n} \"…\" · "
+            f"open once the previous phase is closed: mike phase open {n}")
+    return out
+
+
+def phase_open(case: Path, n: int, name: str, goal: Optional[str]) -> Outcome:
+    out = Outcome()
+    todo = _todo(case, out)
+    existing = todo.phase(n)
+    if not name and existing is not None and not existing.done:
+        name = existing.name  # `mike phase open N` opens the planned phase under its planned name
+    if not name:
+        raise StoreError(f"phase open needs a name: `mike phase open {n} \"CLI core\" --goal …` — no planned phase {n} to take it from", 2)
+    if not grammar.PHASE_NAME_RE.match(name):
+        raise StoreError(f"phase name `{name}` must be English, 1–3 words (F13)", 2)
     if existing and existing.done:
         raise StoreError(f"phase {n} is already closed", 4)
     pf = _phase_file(case, n, existing.name if existing else name)
@@ -516,6 +552,7 @@ def phase_open(case: Path, n: int, name: str, goal: Optional[str]) -> Outcome:
         renamed, existing.name = existing.name, name
         pf = _phase_file(case, n, name)
     if not pf.exists():
+        goal = goal or (existing.summary if existing else None)  # a planned phase carries its intent
         if not goal:
             raise StoreError("a new phase needs `--goal \"one line\"` (F12)", 2)
         pf.parent.mkdir(exist_ok=True)
@@ -928,6 +965,17 @@ def _order_lines(case: Path, root: Path, readme_body: str, journal: Optional[gra
     return lines
 
 
+RULES_TOPICS = "mike help files · order · limits"
+
+
+def _rules_pointer(root: Path) -> str:
+    """Where the rules can be read FROM HERE. The help topics always answer; the spec file only where
+    it exists (the mike-cli clone) — `case new` ships no RULES.md into a project, and a pointer printed
+    on every entry must resolve (feedback 2026-09-03: root case, `.cases/` empty, pointer dead)."""
+    spec = root / "RULES.md"
+    return f"{spec.relative_to(root.parent)} · {RULES_TOPICS}" if spec.is_file() else RULES_TOPICS
+
+
 def entry(root: Path, case: Path) -> Outcome:
     out = Outcome()
     names = store.chain(case, root)
@@ -947,7 +995,7 @@ def entry(root: Path, case: Path) -> Outcome:
         out.say(f"## Order — {len(issues)} thing(s) to put back", *(f"- {ln}" for ln in issues), "")
     else:
         out.say("## Order", "- ✓ everything in place: files carry summaries, Links follow the files, State is current", "")
-    out.say("how to work: mike help start · what goes where: mike help where · rules: .cases/RULES.md · full check: mike check")
+    out.say(f"how to work: mike help start · what goes where: mike help where · rules: {_rules_pointer(root)} · full check: mike check")
     total = "\n".join(out.lines)
     if len(total) > MAX_SCREEN:
         out.lines = [total[:MAX_SCREEN], "", f"[truncated at {MAX_SCREEN} chars — README/TODO/JOURNAL are on disk]"]

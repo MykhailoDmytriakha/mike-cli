@@ -9,7 +9,7 @@
 ```sh
 git clone https://github.com/MykhailoDmytriakha/mike-cli.git ~/MyProjects/mike-cli   # клон может лежать где угодно
 ln -sf ~/MyProjects/mike-cli/bin/mike ~/.local/bin/mike
-mike --version        # → mike 0.9.0
+mike --version        # → mike 0.11.0
 ```
 
 Обновление на любой машине — `git pull` в клоне: команда, правила и тесты приезжают одним движением, symlink переустанавливать не нужно.
@@ -40,6 +40,7 @@ mike case new "название дела" --goal "цель одной строк
 - Решил что-то важное → `mike log DECISION "что · вместо чего · почему"`; получил результат → `mike log RESULT "…"`.
 - Решил проблему → сразу `mike log PROBLEM "проблема → корень → решение"` и рецепт-файл в `.howto/` (первая строка `when: <слова ошибки>`). Упёрся → сначала `grep -ril "<слова ошибки>" .howto/`.
 - Закрыл кусок → `mike todo done N.M`; фазу → `mike phase close N "итог"`; дело → `mike done "итог"`.
+- Видишь работу со сроком вне текущей фазы → `mike phase plan N "Name" --goal "…"` и `mike todo add N "…"`: фаза стоит в TODO заранее, откроется `mike phase open N`, когда текущая закрыта.
 - Заканчиваешь → снова `mike`: если `Order` говорит «State is behind» — перепиши `State` (`mike readme set next "…"`). Следующая сессия начнётся с этой строки.
 ```
 

@@ -32,8 +32,11 @@ Every `mike` entry ends with `## Order`: each line = one thing out of place + th
   descriptions already written in README Links → `mike order --adopt` moves them into the files.
 - folder without a description → `mike readme add links "docs/ — что здесь"` (the folder line is
   yours; the file lines under it are rendered by mike from the summaries).
-- two files with the same words (≥ 40 %) → merge them, or say the difference in each summary.
-- a folder over 64 KB or a file over 24 KB of markdown → merge or delete before adding.
+- two files sharing their text (≥ 50 % of the smaller one's phrasing appears verbatim in the other)
+  → say the difference in each summary, or merge. Shared vocabulary is not shared text: two
+  documents about one call share the names and dates and stay two documents.
+- a file over 24 KB of markdown → split by summary or trim. There is no folder total: a byte
+  count cannot tell eight deliverables from water.
 - State is behind → RESULT/PHASE events were logged after `as of` → rewrite State.
 Nothing here is refused (mike does not write those files); it is shown on every entry until fixed.
 Why: a limit on README alone pushed the water one layer down — new files were cheap, merging never
@@ -66,7 +69,11 @@ PROBLEM (problem → root cause → fix) · RESULT (measurement, number, verdict
 - `--phase p1`, `--phase 1` or a unique phase name select the phase explicitly.
 - Long text is split automatically into a headline + body lines; keep headlines meaningful.""",
 
-    "phases": """phases — `mike phase open|close N "Name"`
+    "phases": """phases — `mike phase plan|open|close N "Name"`
+- plan: `mike phase plan 3 "Council" --goal "one line"` — names the NEXT phase while the current one
+  runs: a `- [ ] 3 Council — intent` line in TODO, no phase file, no journal event. Park its items
+  there now (`mike todo add 3 "…"`); it opens later with `mike phase open 3` (name and goal come
+  from the plan). One phase in flight stays the rule: planned is not open.
 - open: `mike phase open 2 "Server database" --goal "one line"` — creates phases/2-server-database.md
   (goal:/result: header + free body for details, dead ends, drafts). Name: English, 1–3 words.
 - while it runs: items live in TODO (`mike todo add 2 "…"`, `mike todo done 2.1`), the story lives
@@ -96,7 +103,7 @@ PROBLEM (problem → root cause → fix) · RESULT (measurement, number, verdict
 - a way to do a frequent operation      → .howto/<task-verb>.md; its script → scripts/
 - received a file / doc / log / meeting → a case folder by kind, `summary:` as its line 2;
                                           Links picks it up by itself (folder line is yours)
-- two files about the same thing         → merge (the Order block names them)
+- two files sharing their text (Order names them) → say the difference in each summary, or merge
 - finished for today                     → `mike` → Order says "State is behind"? rewrite State
 - closed a phase                        → `mike phase close N "…"` (does TODO+journal+README itself)
 - took a measurement                    → `mike log RESULT "…"` + the number in README State
@@ -122,8 +129,9 @@ TODO: ≤ 100 lines; item text ≤ 80 VISIBLE chars — markdown links [name](pa
   phase name — English, 1–3 words; no items deeper than N.M.
 JOURNAL: event headline ≤ 200 chars (soft 180); long text splits automatically into headline +
   up to 5 body lines of ≤ 160 chars; body beyond that → put the story in the phase file.
-Lower layer (shown, not refused): file `summary:` ≤ 120 chars; a file over 24 KB or a folder over
-  64 KB of markdown → merge/split; two files sharing ≥ 40 % of their words → duplicate.
+Lower layer (shown, not refused): file `summary:` ≤ 120 chars; a file over 24 KB → split by summary
+  or trim; two files where ≥ 50 % of the smaller one's phrasing is verbatim in the other → duplicate.
+  No folder total (dropped in 0.11): a byte count cannot tell deliverables from water.
 Why limits exist: they keep the entry screen readable and squeeze water out — the detail belongs
 in phase files and folders, pointers belong in README. A limit on the top layer alone moves the
 water one layer down — that is why the lower layer has a budget too (F15).""",

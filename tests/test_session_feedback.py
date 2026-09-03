@@ -1,5 +1,5 @@
-"""Regressions from the Bible Truck live-session feedback (2026-09-01): editable TODO,
-section-level README edits, warning noise, trim suggestions, dangling folders."""
+"""Regressions from the Bible Truck live-session feedback (2026-09-01, 2026-09-03): editable TODO,
+section-level README edits, warning noise, trim suggestions, dangling folders, move range."""
 import os
 import tempfile
 import unittest
@@ -199,3 +199,19 @@ class VisibleLength(Base):
         self.assertEqual(code, 0, err)
         self.assertIn(long_text, out, "the old text is shown to the caller")
         self.assertNotIn(long_text, (self.case / "JOURNAL.md").read_text())
+
+
+class MoveRange(Base):
+    def test_move_past_the_end_is_refused_not_clamped(self):
+        # feedback 2026-09-03: `todo move 2.5 2.37` in a 24-item phase answered "now at 2.24" — silently clamped
+        for t in ("a", "b", "c"):
+            run("todo", "add", "1", t)
+        code, out, err = run("todo", "move", "1.1", "1.7")
+        self.assertEqual(code, 2)
+        self.assertIn("phase 1 has items 1.1–1.3 — there is no 1.7", err)
+        self.assertIn("mike todo move 1.1 1.3", err)
+        self.assertEqual([it.text for it in self.todo().phase(1).items], ["a", "b", "c"], "nothing moved")
+        self.assertEqual(run("todo", "move", "1.1", "1.0")[0], 2)
+        code, out, err = run("todo", "move", "1.1", "1.3")
+        self.assertEqual(code, 0, err)
+        self.assertEqual([it.text for it in self.todo().phase(1).items], ["b", "c", "a"])

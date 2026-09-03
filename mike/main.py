@@ -15,6 +15,7 @@ EXAMPLES = """examples
   mike todo hold 3.2 "ждём ответа совета" · mike todo resume 3.2
   mike readme set next "call the pastor" · mike readme add links "docs/contacts.md — кто есть кто"
   mike phase open 3 "CLI core" --goal "single write door with tests"
+  mike phase plan 4 "Council" --goal "agenda for 13 Sept"   name the NEXT phase now, park items under it (todo add 4), open it later
   mike log DECISION "reflect: …"  ·  mike log DECISION "align: …"   (both before closing)
   mike phase close 3 "parsers, stamp and commands work, 55 tests"
   mike readme --file README.md           validate and write a README (progress line kept in sync)
@@ -29,7 +30,7 @@ EXAMPLES = """examples
   mike order --adopt                     move file descriptions from README Links into the files as `summary:`
   mike migrate                           legacy case (files mike never stamped): dry run — what maps where, nothing changes
   mike migrate --apply                   archive the legacy files byte-for-byte, write canonical ones atomically
-  mike check                             all cases against RULES.md; violations → exit 3
+  mike check                             all cases against the rules; violations → exit 3
   mike doctor                            read-only diagnostics, changes nothing
   mike --case mle-prod check             check one case only
 options: --case <name or suffix> (or MIKE_CASE) picks the case; exit codes 0 ok · 1 error · 2 usage · 3 rule violation · 4 precondition
@@ -37,7 +38,7 @@ options: --case <name or suffix> (or MIKE_CASE) picks the case; exit codes 0 ok 
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="mike", description="the write door for .cases/ — see .cases/RULES.md",
+    p = argparse.ArgumentParser(prog="mike", description="the write door for .cases/ — rules: mike help files · order · limits",
                                 epilog=EXAMPLES, formatter_class=argparse.RawDescriptionHelpFormatter, allow_abbrev=False)
     p.add_argument("--case", help="case name or unique suffix (default: MIKE_CASE or the freshest open case)")
     p.add_argument("--version", action="version", version=f"mike {__version__}")
@@ -53,11 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("ref", help="phase number for add (N), item for the rest (N.M)")
     s.add_argument("text", nargs="?", default="", help="text for add/edit, target position N.K for move")
 
-    s = sub.add_parser("phase", help="open or close a phase (close needs RESULT, reflect:, align:)", allow_abbrev=False)
-    s.add_argument("action", choices=["open", "close"])
+    s = sub.add_parser("phase", help="plan · open · close a phase (plan = name the next one without opening it; close needs RESULT, reflect:, align:)", allow_abbrev=False)
+    s.add_argument("action", choices=["plan", "open", "close"])
     s.add_argument("n", type=int)
-    s.add_argument("text", nargs="?", default="", help="name for open, summary for close")
-    s.add_argument("--goal", help="one line, required for a new phase")
+    s.add_argument("text", nargs="?", default="", help="name for plan/open (open takes it from the plan when omitted), summary for close")
+    s.add_argument("--goal", help="one line; required for a new phase unless it was planned with one")
 
     s = sub.add_parser("readme", help="write from --file/stdin · set <prefix> \"…\" · add <section> \"…\" · drop <section> <k>", allow_abbrev=False)
     s.add_argument("action", nargs="?", choices=["set", "add", "drop"])
@@ -169,9 +170,11 @@ def run(argv=None) -> int:
                     out = commands.todo_drop(case, args.ref)
             elif args.cmd == "phase":
                 if args.action == "open":
+                    out = commands.phase_open(case, args.n, args.text, args.goal)  # name may come from the plan
+                elif args.action == "plan":
                     if not args.text:
-                        raise StoreError("phase open needs a name: `mike phase open 3 \"CLI core\" --goal …`", 2)
-                    out = commands.phase_open(case, args.n, args.text, args.goal)
+                        raise StoreError("phase plan needs a name: `mike phase plan 3 \"Council\" --goal \"one line\"`", 2)
+                    out = commands.phase_plan(case, args.n, args.text, args.goal)
                 else:
                     if not args.text:
                         raise StoreError("phase close needs a summary: `mike phase close 3 \"what it delivered\"`", 2)

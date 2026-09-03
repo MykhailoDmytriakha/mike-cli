@@ -93,28 +93,57 @@ class Summaries(Base):
 
 
 class Duplicates(Base):
-    def test_two_files_with_the_same_words_are_named(self):
+    """F15 duplicate = verbatim phrasing (word 3-grams of the smaller file found in the other), not
+    shared vocabulary — feedback 2026-09-03: a question bank and the briefing drawn from it fired at
+    46 % same words while being two documents on purpose."""
+
+    def test_a_copy_is_named_with_the_share_of_verbatim_text(self):
         words = " ".join(f"слово{i}" for i in range(60))
         self.doc("docs/one.md", f"# One\nsummary: a\n{words}\n")
         self.doc("docs/two.md", f"# Two\nsummary: b\n{words} ещё немного других слов здесь\n")
         self.doc("docs/other.md", "# Other\nsummary: c\n" + " ".join(f"иное{i}" for i in range(60)) + "\n")
         code, out, err = run()
         self.assertIn("docs/one.md ≈ docs/two.md", out)
+        self.assertIn("% of one.md's text is verbatim in two.md → say the difference in each summary, or merge", out)
         self.assertNotIn("docs/other.md ≈", out)
         code, out, err = run("check")
         self.assertEqual(code, 0, "duplicates are shown, never refused")
         self.assertIn("order · docs/one.md ≈ docs/two.md", err)
 
-    def test_budgets_name_the_big_file_and_folder(self):
+    def test_same_vocabulary_in_another_order_is_not_a_duplicate(self):
+        words = [f"слово{i}" for i in range(80)]
+        self.doc("docs/bank.md", "# Bank\nsummary: вопросы к звонку\n" + " ".join(words) + "\n")
+        self.doc("docs/brief.md", "# Brief\nsummary: лист под звонок\n" + " ".join(reversed(words)) + "\n")
+        code, out, err = run()
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("≈", out, "100 % same words, 0 % same phrasing: two documents, not a copy")
+
+    def test_a_third_of_the_text_reused_is_not_a_duplicate(self):
+        base = [f"фраза{i}" for i in range(90)]
+        self.doc("docs/call.md", "# Call\nsummary: банк вопросов\n" + " ".join(base) + "\n")
+        reused = " ".join(base[:30])  # ~1/3 of the brief is verbatim from the bank — BibleTruck measured 0.34
+        own = " ".join(f"своё{i}" for i in range(60))
+        self.doc("docs/brief.md", f"# Brief\nsummary: лист под звонок\n{reused} {own}\n")
+        code, out, err = run()
+        self.assertNotIn("≈", out)
+
+    def test_short_files_are_never_called_copies(self):
+        self.doc("docs/a.md", "# A\nsummary: a\nодна и та же короткая строка на десять слов ровно\n")
+        self.doc("docs/b.md", "# B\nsummary: b\nодна и та же короткая строка на десять слов ровно\n")
+        code, out, err = run()
+        self.assertNotIn("≈", out)
+
+    def test_budgets_name_the_big_file_but_no_folder_total(self):
         self.doc("docs/big.md", "# Big\nsummary: s\n" + ("слово " * 4000) + "\n")
         code, out, err = run()
         self.assertIn("docs/big.md is", out)
         self.assertIn("split by summary or trim", out)
-        for i in range(4):
-            self.doc(f"docs/f{i}.md", f"# F{i}\nsummary: s{i}\n" + (f"текст{i} " * 3000) + "\n")
+        for i in range(4):  # 4 × 18 KB of deliverables (UTF-8): over the old 64 KB folder total, each under 24
+            self.doc(f"docs/f{i}.md", f"# F{i}\nsummary: s{i}\n" + (f"текст{i} " * 1500) + "\n")
         code, out, err = run()
-        self.assertIn("docs/ is", out)
-        self.assertIn("merge or delete before adding", out)
+        self.assertNotIn("docs/ is", out, "feedback 2026-09-03: a byte count cannot tell deliverables from water")
+        self.assertNotIn("merge or delete", out)
+        self.assertNotIn("docs/f0.md is", out)
 
 
 class Anchor(Base):
@@ -175,6 +204,15 @@ class Entry(Base):
         self.assertIn("## Order", out)
         self.assertIn("how to work: mike help start", out)
 
+    def test_rules_pointer_in_the_footer_resolves(self):
+        # feedback 2026-09-03: `case new` ships no RULES.md, so a project must not be sent to a dead path
+        code, out, err = run()
+        self.assertIn("rules: mike help files · order · limits", out)
+        self.assertNotIn(".cases/RULES.md", out)
+        (Path(self.tmp.name) / ".cases" / "RULES.md").write_text("# RULES\n", encoding="utf-8")
+        code, out, err = run()
+        self.assertIn("rules: .cases/RULES.md · mike help files · order · limits", out)
+
     def test_no_cases_prints_onboarding(self):
         with tempfile.TemporaryDirectory() as empty:
             os.chdir(empty)
@@ -221,6 +259,8 @@ class RootMode(unittest.TestCase):
             self.assertIn("  - [plan.md](docs/plan.md) — план", r)
             self.assertNotIn("src/", r, "source folders are not case content")
             self.assertNotIn("src/notes.md", out)
+            self.assertNotIn(".cases/RULES.md", out, "root mode: .cases/ is empty, the pointer must not name it")
+            self.assertIn("rules: mike help files · order · limits", out)
         finally:
             os.chdir(old)
             tmp.cleanup()

@@ -5,8 +5,10 @@ water used to settle: a new file is cheap, merging two is never done. This modul
 visible from the top:
 - every .md file in a content folder carries `summary: <one line>` near its top (F14) — the file
   describes itself, README Links is rendered from those lines and never rots;
-- two files that say the same thing are named aloud (F15, word overlap);
-- a folder or a file over its budget is named aloud (F15) — merge or delete before adding;
+- two files that share their TEXT are named aloud (F15): verbatim phrasing, not vocabulary — two
+  documents about one subject always share the words, only a copy shares the sentences;
+- a file over its budget is named aloud (F15) — split by summary or trim; a folder total is not
+  (a byte count cannot tell deliverables from water);
 - README State carries `as of: <journal entry>`: RESULT/PHASE events after it mean the "now" is
   behind the history (S5).
 Nothing here refuses a write: the lower layer is written by the agent directly, so the tool can
@@ -23,9 +25,14 @@ SUMMARY_RE = re.compile(r"^summary: (.+)$")
 SUMMARY_SCAN_LINES = 5
 SUMMARY_CHARS = 120
 FILE_WARN_BYTES = 24 * 1024
-FOLDER_WARN_BYTES = 64 * 1024
-DUP_JACCARD = 0.40  # measured 2026-09-01: a real duplicate pair scored 0.46, the next pair 0.24
-WORD_RE = re.compile(r"[a-zа-яё0-9]{4,}", re.I)
+# F15 duplicate = verbatim overlap: word 3-grams (shingles) of the smaller file found in the other.
+# Measured 2026-09-03 on BibleTruck docs/ (8 files): the pair the 0.10 word-set metric flagged at
+# 0.46 — a question bank and the briefing sheet drawn from it, kept apart on purpose — shares 0.34
+# of its phrasing; every other pair ≤ 0.11; a copy scores 0.8+. 0.50 sits between with margin.
+SHINGLE_WORDS = 3
+DUP_SHARE = 0.50
+DUP_MIN_SHINGLES = 30  # a file of ~30 words is too short to call anything a copy of it
+TOKEN_RE = re.compile(r"[a-zа-яё0-9]+", re.I)
 SKIP_DIRS = {"phases", "node_modules", "scripts", "legacy"}  # legacy/ = byte-for-byte archive, never nagged
 # L4 kinds — in root mode only these (plus folders already listed in Links) are content folders,
 # because the project folder also holds source code, build output and whatever else.
@@ -244,35 +251,40 @@ def adopt(case: Path, fallback: Dict[str, str]) -> List[str]:
 
 
 # ---- duplicates and budgets (F15) ---------------------------------------------------------------
-def _words(path: Path) -> set:
+def _shingles(path: Path) -> set:
+    """Word 3-grams of a file, lowercased. Shared vocabulary is not shared text; shared phrasing is."""
     try:
-        return set(w.lower() for w in WORD_RE.findall(path.read_text(encoding="utf-8", errors="ignore")))
+        toks = [w.lower() for w in TOKEN_RE.findall(path.read_text(encoding="utf-8", errors="ignore"))]
     except OSError:
         return set()
+    return set(tuple(toks[i:i + SHINGLE_WORDS]) for i in range(len(toks) - SHINGLE_WORDS + 1))
 
 
 def duplicates(folders: List[Folder]) -> List[Tuple[str, str, float]]:
+    """(smaller file, other file, share of the smaller file's phrasing found verbatim in the other)."""
     docs = [d for f in folders if f.name != "phases" for d in f.docs]
-    words = {d.rel: _words(d.path) for d in docs}
+    shingles = {d.rel: _shingles(d.path) for d in docs}
     pairs = []
     for i, a in enumerate(docs):
         for b in docs[i + 1:]:
-            wa, wb = words[a.rel], words[b.rel]
-            if not wa or not wb:
+            sa, sb = shingles[a.rel], shingles[b.rel]
+            if len(sa) < DUP_MIN_SHINGLES or len(sb) < DUP_MIN_SHINGLES:
                 continue
-            j = len(wa & wb) / len(wa | wb)
-            if j >= DUP_JACCARD:
-                pairs.append((a.rel, b.rel, j))
+            small, other = (a, b) if len(sa) <= len(sb) else (b, a)
+            share = len(sa & sb) / min(len(sa), len(sb))
+            if share >= DUP_SHARE:
+                pairs.append((small.rel, other.rel, share))
     return sorted(pairs, key=lambda x: -x[2])
 
 
 def budgets(folders: List[Folder]) -> List[str]:
+    """A file over its budget is named. A folder total is not (dropped in 0.11): a byte count cannot
+    tell eight deliverables from water — BibleTruck 2026-09-03, docs/ 77 KB of working documents,
+    nothing stale — and a line that can only be closed by deleting good work teaches to skip Order."""
     out = []
     for f in folders:
         if f.name == "phases":
             continue
-        if f.md_bytes > FOLDER_WARN_BYTES:
-            out.append(f"{f.name}/ is {-(-f.md_bytes // 1024)} KB of markdown (limit {FOLDER_WARN_BYTES // 1024}) → merge or delete before adding")
         for d in f.docs:
             if d.bytes > FILE_WARN_BYTES:
                 out.append(f"{d.rel} is {-(-d.bytes // 1024)} KB (limit {FILE_WARN_BYTES // 1024}) → split by summary or trim")
@@ -361,7 +373,8 @@ def report(case: Path, root_mode: bool, readme_body: str, journal: Optional[gram
         desc = described.get(f.name, "")
         if not desc or desc.startswith(PLACEHOLDER_FOLDER):
             out.append(f"folder {f.name}/ has no description → mike readme add links \"{f.name}/ — что здесь\"")
-    for a, b, j in duplicates(folders):
-        out.append(f"{a} ≈ {b} ({int(j * 100)} % same words) → merge them, or say the difference in each summary")
+    for small, other, share in duplicates(folders):
+        out.append(f"{small} ≈ {other}: {int(share * 100)} % of {small.rsplit('/', 1)[-1]}'s text is verbatim in "
+                   f"{other.rsplit('/', 1)[-1]} → say the difference in each summary, or merge")
     out.extend(budgets(folders))
     return out
