@@ -9,7 +9,7 @@ when: Order говорит «State is behind» · «file(s) without summary» ·
 | `State is behind: N entries since as of …` | переписать «сейчас»: `mike readme set next "…"` или `mike readme --file README.md` — якорь `as of` встанет на свежую запись |
 | `N file(s) without summary:` | вторая строка файла: `summary: одна фраза` — описания, уже написанные в Links, переносит `mike order --adopt` |
 | `folder docs/ has no description` | `mike readme add links "docs/ — что здесь"` — строка папки твоя, файлы под ней mike допишет сам |
-| `a.md ≈ b.md: NN % of a.md's text is verbatim in b.md` | назвать разницу в `summary:` обоих — или слить, если это копия. Считаются дословные фразы (тройки слов подряд), не словарь: два документа об одном звонке делят имена и даты и остаются двумя документами |
+| `a.md ≈ b.md: NN % of a.md's text is verbatim in b.md` | назвать разницу в `summary:` обоих — или слить, если это копия. Считаются дословные фразы (тройки слов подряд), не словарь: два документа об одном предмете делят имена и даты и остаются двумя документами |
 | `x.md is NN KB (limit 24)` | разделить по summary или сократить. Бюджета папки нет: счётчик байтов не отличает рабочие документы от воды |
 | `extra file in the case root` | унести в папку по виду (`docs/`, `research/`, `logs/`) |
 | `pending X.recover.md` | внести строки командами mike, потом `rm` |

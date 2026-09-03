@@ -29,11 +29,11 @@ class Base(unittest.TestCase):
 
 class EditableTodo(Base):
     def test_edit_rewrites_text_and_shows_the_old(self):
-        run("todo", "add", "1", "позвонить пастору")
-        code, out, err = run("todo", "edit", "1.1", "позвонить пастору до пятницы")
+        run("todo", "add", "1", "позвонить заказчику")
+        code, out, err = run("todo", "edit", "1.1", "позвонить заказчику до пятницы")
         self.assertEqual(code, 0, err)
-        self.assertEqual(self.todo().phase(1).items[0].text, "позвонить пастору до пятницы")
-        self.assertIn("was: «позвонить пастору»", out)
+        self.assertEqual(self.todo().phase(1).items[0].text, "позвонить заказчику до пятницы")
+        self.assertIn("was: «позвонить заказчику»", out)
         # P5: an edit is not an event — since 0.9 mike writes no journal line for it (git keeps history)
         self.assertNotIn("todo 1.1", (self.case / "JOURNAL.md").read_text())
 
@@ -71,11 +71,11 @@ class ReadmeSections(Base):
         code, out, err = run("readme", "add", "links", "docs/contacts.md — кто есть кто")
         self.assertEqual(code, 0, err)
         self.assertIn("- docs/contacts.md — кто есть кто", (self.case / "README.md").read_text())
-        code, out, err = run("readme", "add", "problems", "open · нет ответа от пастора")
+        code, out, err = run("readme", "add", "problems", "open · нет ответа от заказчика")
         self.assertEqual(code, 0, err)
         code, out, err = run("readme", "drop", "problems", "1")
         self.assertEqual(code, 0, err)
-        self.assertNotIn("нет ответа от пастора", (self.case / "README.md").read_text())
+        self.assertNotIn("нет ответа от заказчика", (self.case / "README.md").read_text())
         self.assertEqual(run("readme", "add", "nosuch", "x")[0], 2)
         self.assertEqual(run("readme", "drop", "problems", "9")[0], 4)
 

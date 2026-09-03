@@ -94,8 +94,8 @@ class Summaries(Base):
 
 class Duplicates(Base):
     """F15 duplicate = verbatim phrasing (word 3-grams of the smaller file found in the other), not
-    shared vocabulary — feedback 2026-09-03: a question bank and the briefing drawn from it fired at
-    46 % same words while being two documents on purpose."""
+    shared vocabulary — feedback 2026-09-03: two deliberately different documents on one subject fired
+    at 46 % same words."""
 
     def test_a_copy_is_named_with_the_share_of_verbatim_text(self):
         words = " ".join(f"слово{i}" for i in range(60))
@@ -112,18 +112,18 @@ class Duplicates(Base):
 
     def test_same_vocabulary_in_another_order_is_not_a_duplicate(self):
         words = [f"слово{i}" for i in range(80)]
-        self.doc("docs/bank.md", "# Bank\nsummary: вопросы к звонку\n" + " ".join(words) + "\n")
-        self.doc("docs/brief.md", "# Brief\nsummary: лист под звонок\n" + " ".join(reversed(words)) + "\n")
+        self.doc("docs/bank.md", "# Bank\nsummary: банк вопросов\n" + " ".join(words) + "\n")
+        self.doc("docs/brief.md", "# Brief\nsummary: краткий лист\n" + " ".join(reversed(words)) + "\n")
         code, out, err = run()
         self.assertEqual(code, 0, err)
         self.assertNotIn("≈", out, "100 % same words, 0 % same phrasing: two documents, not a copy")
 
     def test_a_third_of_the_text_reused_is_not_a_duplicate(self):
         base = [f"фраза{i}" for i in range(90)]
-        self.doc("docs/call.md", "# Call\nsummary: банк вопросов\n" + " ".join(base) + "\n")
-        reused = " ".join(base[:30])  # ~1/3 of the brief is verbatim from the bank — BibleTruck measured 0.34
+        self.doc("docs/call.md", "# Source\nsummary: полный текст\n" + " ".join(base) + "\n")
+        reused = " ".join(base[:30])  # ~1/3 of the brief is verbatim from the bank — a live case measured 0.34
         own = " ".join(f"своё{i}" for i in range(60))
-        self.doc("docs/brief.md", f"# Brief\nsummary: лист под звонок\n{reused} {own}\n")
+        self.doc("docs/brief.md", f"# Brief\nsummary: краткий лист\n{reused} {own}\n")
         code, out, err = run()
         self.assertNotIn("≈", out)
 

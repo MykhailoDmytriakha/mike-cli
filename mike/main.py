@@ -12,10 +12,10 @@ EXAMPLES = """examples
   mike log RESULT "p95 dropped 120 → 48 ms"
   mike todo add 3 "write the parser"      mike todo done 3.1
   mike todo edit 3.1 "new text" · mike todo move 3.7 3.2 · mike todo drop 3.4
-  mike todo hold 3.2 "ждём ответа совета" · mike todo resume 3.2
-  mike readme set next "call the pastor" · mike readme add links "docs/contacts.md — кто есть кто"
+  mike todo hold 3.2 "ждём ответа заказчика" · mike todo resume 3.2
+  mike readme set next "call the customer" · mike readme add links "docs/contacts.md — кто есть кто"
   mike phase open 3 "CLI core" --goal "single write door with tests"
-  mike phase plan 4 "Council" --goal "agenda for 13 Sept"   name the NEXT phase now, park items under it (todo add 4), open it later
+  mike phase plan 4 "Rollout" --goal "first users on the new build"   name the NEXT phase now, park items under it (todo add 4), open it later
   mike log DECISION "reflect: …"  ·  mike log DECISION "align: …"   (both before closing)
   mike phase close 3 "parsers, stamp and commands work, 55 tests"
   mike readme --file README.md           validate and write a README (progress line kept in sync)
@@ -32,7 +32,7 @@ EXAMPLES = """examples
   mike migrate --apply                   archive the legacy files byte-for-byte, write canonical ones atomically
   mike check                             all cases against the rules; violations → exit 3
   mike doctor                            read-only diagnostics, changes nothing
-  mike --case mle-prod check             check one case only
+  mike --case connect-database check     check one case only
 options: --case <name or suffix> (or MIKE_CASE) picks the case; exit codes 0 ok · 1 error · 2 usage · 3 rule violation · 4 precondition
 """
 
@@ -173,7 +173,7 @@ def run(argv=None) -> int:
                     out = commands.phase_open(case, args.n, args.text, args.goal)  # name may come from the plan
                 elif args.action == "plan":
                     if not args.text:
-                        raise StoreError("phase plan needs a name: `mike phase plan 3 \"Council\" --goal \"one line\"`", 2)
+                        raise StoreError("phase plan needs a name: `mike phase plan 3 \"Rollout\" --goal \"one line\"`", 2)
                     out = commands.phase_plan(case, args.n, args.text, args.goal)
                 else:
                     if not args.text:

@@ -26,9 +26,9 @@ SUMMARY_SCAN_LINES = 5
 SUMMARY_CHARS = 120
 FILE_WARN_BYTES = 24 * 1024
 # F15 duplicate = verbatim overlap: word 3-grams (shingles) of the smaller file found in the other.
-# Measured 2026-09-03 on BibleTruck docs/ (8 files): the pair the 0.10 word-set metric flagged at
-# 0.46 — a question bank and the briefing sheet drawn from it, kept apart on purpose — shares 0.34
-# of its phrasing; every other pair ≤ 0.11; a copy scores 0.8+. 0.50 sits between with margin.
+# Measured 2026-09-03 on a live case (8 documents in one folder): the pair the 0.10 word-set metric
+# flagged at 0.46 — a document drawn from another, kept apart on purpose — shares 0.34 of its
+# phrasing; every other pair ≤ 0.11; a copy scores 0.8+. 0.50 sits between with margin.
 SHINGLE_WORDS = 3
 DUP_SHARE = 0.50
 DUP_MIN_SHINGLES = 30  # a file of ~30 words is too short to call anything a copy of it
@@ -279,8 +279,8 @@ def duplicates(folders: List[Folder]) -> List[Tuple[str, str, float]]:
 
 def budgets(folders: List[Folder]) -> List[str]:
     """A file over its budget is named. A folder total is not (dropped in 0.11): a byte count cannot
-    tell eight deliverables from water — BibleTruck 2026-09-03, docs/ 77 KB of working documents,
-    nothing stale — and a line that can only be closed by deleting good work teaches to skip Order."""
+    tell deliverables from water — a live case 2026-09-03: a folder over the limit held only working
+    documents, nothing stale — and a line that can only be closed by deleting good work teaches to skip Order."""
     out = []
     for f in folders:
         if f.name == "phases":

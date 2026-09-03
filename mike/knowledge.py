@@ -34,9 +34,9 @@ Every `mike` entry ends with `## Order`: each line = one thing out of place + th
   yours; the file lines under it are rendered by mike from the summaries).
 - two files sharing their text (≥ 50 % of the smaller one's phrasing appears verbatim in the other)
   → say the difference in each summary, or merge. Shared vocabulary is not shared text: two
-  documents about one call share the names and dates and stay two documents.
+  documents on one subject share the names and dates and stay two documents.
 - a file over 24 KB of markdown → split by summary or trim. There is no folder total: a byte
-  count cannot tell eight deliverables from water.
+  count cannot tell deliverables from water.
 - State is behind → RESULT/PHASE events were logged after `as of` → rewrite State.
 Nothing here is refused (mike does not write those files); it is shown on every entry until fixed.
 Why: a limit on README alone pushed the water one layer down — new files were cheap, merging never
@@ -70,8 +70,8 @@ PROBLEM (problem → root cause → fix) · RESULT (measurement, number, verdict
 - Long text is split automatically into a headline + body lines; keep headlines meaningful.""",
 
     "phases": """phases — `mike phase plan|open|close N "Name"`
-- plan: `mike phase plan 3 "Council" --goal "one line"` — names the NEXT phase while the current one
-  runs: a `- [ ] 3 Council — intent` line in TODO, no phase file, no journal event. Park its items
+- plan: `mike phase plan 3 "Rollout" --goal "one line"` — names the NEXT phase while the current one
+  runs: a `- [ ] 3 Rollout — intent` line in TODO, no phase file, no journal event. Park its items
   there now (`mike todo add 3 "…"`); it opens later with `mike phase open 3` (name and goal come
   from the plan). One phase in flight stays the rule: planned is not open.
 - open: `mike phase open 2 "Server database" --goal "one line"` — creates phases/2-server-database.md
