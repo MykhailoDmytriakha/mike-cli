@@ -12,7 +12,8 @@ when: Order говорит «State is behind» · «file(s) without summary» ·
 | `a.md ≈ b.md: NN % of a.md's text is verbatim in b.md` | назвать разницу в `summary:` обоих — или слить, если это копия. Считаются дословные фразы (тройки слов подряд), не словарь: два документа об одном предмете делят имена и даты и остаются двумя документами |
 | `x.md is NN KB (limit 24)` | разделить по summary или сократить. Бюджета папки нет: счётчик байтов не отличает рабочие документы от воды |
 | `overdue: N.M «…» was due …` | сделано → `mike todo done N.M`; сдвинулось → `mike todo due N.M <дата>`; больше не нужно → `mike todo cancel N.M "почему"` |
-| `N broken link(s): file → target` | поправить ссылку руками или переносить файлы через `mike mv old new` — ссылки переписываются сами |
+| `N broken link(s): file → target` | поправить ссылку руками или переносить файлы через `mike mv old new` — ссылки переписываются сами. В README/TODO мёртвая ссылка — нарушение `check` (F16), в документах — только эта строка |
+| `State` держит строку, которая перестала быть правдой | `mike readme set <prefix> ""` или `mike readme drop state <prefix>` — строки `progress:`/`last:`/`as of:` держит mike, их не убрать |
 | `extra file in the case root` | унести в папку по виду (`docs/`, `research/`, `logs/`) |
 | `pending X.recover.md` | внести строки командами mike, потом `rm` |
 

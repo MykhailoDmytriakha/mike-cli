@@ -403,9 +403,10 @@ def broken_links(case: Path, folders: List[Folder], readme_body: str, todo_body:
 
 # ---- the report shown on every entry (P12) ------------------------------------------------------
 def report(case: Path, root_mode: bool, readme_body: str, journal: Optional[grammar.Journal],
-           links_lines: List[str]) -> List[str]:
+           links_lines: List[str], link_violations: Optional[list] = None) -> List[str]:
     """Lines for the `## Order` block: each one names what is out of order and the command that
-    puts it back. Empty list = everything in place."""
+    puts it back. Empty list = everything in place. With `link_violations` (a list), broken links
+    in README/TODO are collected there for `check` to report as violations (F16) instead."""
     out: List[str] = []
     described: Dict[str, str] = {}
     for ln in links_lines:
@@ -444,6 +445,9 @@ def report(case: Path, root_mode: bool, readme_body: str, journal: Optional[gram
     except Exception:  # noqa: BLE001 — no TODO, no links to check there
         todo_body = ""
     broken = broken_links(case, folders, readme_body, todo_body)
+    if link_violations is not None:
+        link_violations.extend((f, t) for f, t in broken if f in ("README.md", "TODO.md"))
+        broken = [(f, t) for f, t in broken if f not in ("README.md", "TODO.md")]
     if broken:
         shown = ", ".join(f"{f} → {t}" for f, t in broken[:4]) + (f" … +{len(broken) - 4}" if len(broken) > 4 else "")
         out.append(f"{len(broken)} broken link(s): {shown} → fix the link, or move files with `mike mv old new` (links follow)")

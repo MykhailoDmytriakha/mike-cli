@@ -61,7 +61,11 @@ happened. Now the lower layer is visible from the top, and the top is rendered f
   (outside the content folders) stays as written — nothing in Links is dropped silently.
   Recipes are NOT per-case: they go to the project-root .howto/.
 - README State carries lines mike owns: `progress:` (from TODO), `last:` (newest RESULT),
-  `as of:` (the journal entry State was last rewritten against, S5). Yours: next, ждёт, срок …""",
+  `as of:` (the journal entry State was last rewritten against, S5). Yours: next, ждёт, due …
+  — `mike readme set <prefix> "…"` sets one, `mike readme set <prefix> ""` (or `readme drop state
+  <prefix>`) removes it once it stops being true; a stale State line is a lie the owner reads.
+- Exactly five sections (F1): a topic of your project (a budget, a roster) is a State line
+  (`- budget: …`), or a file with `summary:` — its line lands in Links by itself.""",
 
     "journal": """journal events — `mike log <TYPE> "text"`
 Types: PHASE (phase opened/closed, with outcome) · DECISION (chose X over Y, why) ·
@@ -148,7 +152,9 @@ optional: --repro "commands" --why "…" --acceptance "…"
 The artifact lands in the mike-cli clone's feedback/ pool (travels with git) and the path is
 printed. Title + --actual + --expected are required; nothing from your environment is included.""",
     "limits": """the numbers (all enforced at write time)
-README: 200 lines / 8 KB → warning · 300 lines / 12 KB → refusal; pointer line ≤ 150 chars (warning).
+README: 200 lines / 8 KB of YOUR text → warning · 300 lines / 12 KB → refusal; pointer line ≤ 150 chars
+  (warning). The nested Links lines mike renders from the files are reported, not counted — you
+  cannot shorten them in README, and the file index must not squeeze out what the owner writes.
 TODO: ≤ 100 lines; item text ≤ 80 VISIBLE chars — markdown links [name](path) count as `name`
   (a refusal prints a ready trimmed suggestion);
   phase name — English, 1–3 words; no items deeper than N.M.

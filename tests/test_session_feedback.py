@@ -190,7 +190,10 @@ class HoldResume(Base):
 
 class VisibleLength(Base):
     def test_markdown_link_counts_as_its_name(self):
-        text = "[call-spokane](docs/very/long/path/to/the/call-spokane-notes-file.md) — дозвониться"
+        target = self.case / "docs/very/long/path/to/the/customer-call-notes-file.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("# notes\nsummary: заметки\n", encoding="utf-8")  # the link must resolve (F16)
+        text = "[customer-call](docs/very/long/path/to/the/customer-call-notes-file.md) — дозвониться"
         self.assertGreater(len(text), 80)
         code, out, err = run("todo", "add", "1", text)
         self.assertEqual(code, 0, err)

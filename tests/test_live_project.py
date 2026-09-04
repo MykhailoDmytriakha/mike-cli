@@ -160,8 +160,60 @@ class Mv(Base):
         code, out, err = run()
         self.assertEqual(code, 0, err)
         self.assertIn("2 broken link(s): TODO.md → docs/b.md, docs/a.md → gone.md → fix the link, or move files with `mike mv old new`", out)
+        # check: a dead link in the files mike holds is a violation (F16); in a document — a warning
         code, out, err = run("check")
-        self.assertIn("broken link", err)
+        self.assertEqual(code, 3, "the owner reads `violations:` — a dead link in TODO must count there")
+        self.assertIn("F16 · broken link → docs/b.md", out + err)
+        self.assertIn("docs/a.md → gone.md", err)
+        self.assertNotIn("TODO.md → docs/b.md", err, "not reported twice")
+        run("todo", "drop", "1.1")
+        code, out, err = run("check")
+        self.assertEqual(code, 0, err + out)
+        self.assertIn("docs/a.md → gone.md", err)
+
+
+class StateLines(Base):
+    def test_a_state_line_can_be_removed_by_empty_set_or_drop(self):
+        # feedback 2026-09-03: `readme set пауза ""` was a usage error — State lines were one-way
+        run("readme", "set", "пауза", "ждём ответа")
+        self.assertIn("- пауза: ждём ответа", self.read("README.md"))
+        code, out, err = run("readme", "set", "пауза", "")
+        self.assertEqual(code, 0, err)
+        self.assertIn("`- пауза: …` removed", out)
+        self.assertNotIn("пауза", self.read("README.md"))
+        run("readme", "set", "пауза", "снова")
+        code, out, err = run("readme", "drop", "state", "пауза")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("пауза", self.read("README.md"))
+        code, out, err = run("readme", "drop", "state", "пауза")
+        self.assertEqual(code, 4)
+        self.assertIn("no `- пауза:` line", err)
+        code, out, err = run("readme", "set", "progress", "")
+        self.assertEqual(code, 2)
+        self.assertIn("held by mike", err)
+        self.assertIn("- progress:", self.read("README.md"))
+        self.assertEqual(run("readme", "drop", "decisions", "пауза")[0], 2, "only State goes by prefix")
+
+
+class ReadmeBudget(Base):
+    def test_rendered_links_do_not_count_against_the_readme_cap(self):
+        # feedback 2026-09-03: the file index mike renders squeezed the owner's own lines out of 8 KB
+        for i in range(110):
+            self.doc(f"docs/f{i:03d}.md", f"# F{i}\nsummary: {'описание ' * 12}{i}\n")
+        run("readme", "add", "links", "docs/ — документы")
+        code, out, err = run()
+        self.assertEqual(code, 0, err)
+        r = self.read("README.md")
+        self.assertIn("[f109.md](docs/f109.md)", r, "README refreshed although the rendered index alone is over 12 KB")
+        self.assertGreater(len(r.encode("utf-8")), 12 * 1024)
+        self.assertNotIn("F2", err)
+        for i in range(70):
+            run("readme", "add", "decisions", f"2026-09-03 · решение номер {i} · " + "потому что " * 10)
+        code, out, err = run("readme", "add", "decisions", "ещё одно")
+        self.assertEqual(code, 0, err)
+        self.assertIn("of your text", err)
+        self.assertIn("Links rendered by mike:", err)
+        self.assertIn("not counted", err)
 
 
 if __name__ == "__main__":

@@ -280,16 +280,14 @@ class Readme(Result):
     sections: dict = field(default_factory=dict)  # name -> list of lines (without the heading)
     lines: int = 0
     bytes: int = 0
+    rendered_lines: int = 0   # Links lines mike renders from the files — not counted by F2
+    rendered_bytes: int = 0
 
 
 def parse_readme(text: str) -> Readme:
     r = Readme()
     lines = _frame(text, r)
     r.lines, r.bytes = len(lines), len("\n".join(lines).encode("utf-8"))
-    if r.lines > README_MAX_LINES or r.bytes > README_MAX_BYTES:
-        r.error("F2", 0, f"README is {r.lines} lines / {r.bytes} bytes, limit {README_MAX_LINES} / {README_MAX_BYTES}")
-    elif r.lines > README_WARN_LINES or r.bytes > README_WARN_BYTES:
-        r.warn("F2", 0, f"README is {r.lines} lines / {r.bytes} bytes, over {README_WARN_LINES} / {README_WARN_BYTES}: move a section into a file")
     order, current = [], None
     for i, raw in enumerate(lines[1:], start=2):
         m = SECTION_RE.match(raw)
@@ -308,6 +306,19 @@ def parse_readme(text: str) -> Readme:
         r.sections[current].append(raw)
         if raw.startswith("- ") and visible_len(raw.strip()) > README_POINTER_CHARS:
             r.warn("F2", i, f"pointer line is {visible_len(raw.strip())} visible chars, over {README_POINTER_CHARS}")
+    # F2 counts the text people write. The nested Links lines (files, sub-folders, `other:`) are
+    # rendered by mike from the files and cannot be shortened in README — they are reported, not
+    # counted (feedback 2026-09-03: a growing file index squeezed the owner's own five lines out).
+    rendered = [ln for ln in r.sections.get("Links", []) if ln.startswith("  ")]
+    r.rendered_lines, r.rendered_bytes = len(rendered), sum(len(ln.encode("utf-8")) + 1 for ln in rendered)
+    own_lines, own_bytes = r.lines - r.rendered_lines, r.bytes - r.rendered_bytes
+    aside = (f" (Links rendered by mike: {r.rendered_lines} lines / {r.rendered_bytes} bytes more, not counted)"
+             if rendered else "")
+    if own_lines > README_MAX_LINES or own_bytes > README_MAX_BYTES:
+        r.error("F2", 0, f"README is {own_lines} lines / {own_bytes} bytes of your text, limit {README_MAX_LINES} / {README_MAX_BYTES}{aside}")
+    elif own_lines > README_WARN_LINES or own_bytes > README_WARN_BYTES:
+        r.warn("F2", 0, f"README is {own_lines} lines / {own_bytes} bytes of your text, over {README_WARN_LINES} / {README_WARN_BYTES}: "
+                        f"move a section into a file{aside}")
     if order != README_SECTIONS:
         r.error("F1", 0, f"sections must be exactly {' · '.join(README_SECTIONS)}, got {' · '.join(order) or 'none'}")
     state = r.sections.get("State", [])

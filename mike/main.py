@@ -17,7 +17,7 @@ EXAMPLES = """examples
   mike readme set due "2026-09-13 · decision meeting"   the case deadline — `mike` counts the days on entry
   mike mv docs/old.md docs/notes/new.md   move a file; every link to it is rewritten (README/TODO/JOURNAL and the documents)
   mike todo hold 3.2 "ждём ответа заказчика" · mike todo resume 3.2
-  mike readme set next "call the customer" · mike readme add links "docs/contacts.md — кто есть кто"
+  mike readme set next "call the customer" · mike readme set пауза "" (removes the line) · mike readme add links "docs/contacts.md — кто есть кто"
   mike phase open 3 "CLI core" --goal "single write door with tests"
   mike phase plan 4 "Rollout" --goal "first users on the new build"   name the NEXT phase now, park items under it (todo add 4), open it later
   mike log DECISION "reflect: …"  ·  mike log DECISION "align: …"   (both before closing)
@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("text", nargs="?", default="", help="name for plan/open (open takes it from the plan when omitted), summary for close")
     s.add_argument("--goal", help="one line; required for a new phase unless it was planned with one")
 
-    s = sub.add_parser("readme", help="write from --file/stdin · set <prefix> \"…\" · add <section> \"…\" · drop <section> <k>", allow_abbrev=False)
+    s = sub.add_parser("readme", help="write from --file/stdin · set <prefix> \"…\" (\"\" removes) · add <section> \"…\" · drop <section> <k> | drop state <prefix>", allow_abbrev=False)
     s.add_argument("action", nargs="?", choices=["set", "add", "drop"])
     s.add_argument("a", nargs="?")
     s.add_argument("b", nargs="?")
@@ -193,17 +193,17 @@ def run(argv=None) -> int:
                     out = commands.phase_close(case, args.n, args.text)
             elif args.cmd == "readme":
                 if args.action == "set":
-                    if not args.a or not args.b:
-                        raise StoreError("usage: mike readme set <prefix> \"text\" (a State line)", 2)
+                    if not args.a or args.b is None:
+                        raise StoreError("usage: mike readme set <prefix> \"text\" (a State line; \"\" removes it)", 2)
                     out = commands.readme_set(case, args.a, args.b)
                 elif args.action == "add":
                     if not args.a or not args.b:
                         raise StoreError("usage: mike readme add <section> \"line\"", 2)
                     out = commands.readme_add(case, args.a, args.b)
                 elif args.action == "drop":
-                    if not args.a or not args.b or not args.b.isdigit():
-                        raise StoreError("usage: mike readme drop <section> <k>", 2)
-                    out = commands.readme_drop(case, args.a, int(args.b))
+                    if not args.a or not args.b:
+                        raise StoreError("usage: mike readme drop <section> <k> · mike readme drop state <prefix>", 2)
+                    out = commands.readme_drop(case, args.a, args.b)
                 else:
                     text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
                     out = commands.readme(case, text)

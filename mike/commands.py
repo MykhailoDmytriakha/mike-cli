@@ -736,10 +736,16 @@ def readme_set(case: Path, prefix: str, text: str) -> Outcome:
     out = Outcome()
     _readme_sections(case, out)  # ensures the file parses before we touch it
     prefix = prefix.rstrip(":")
-    body = _set_state_line(_readme_text(case, out), f"{prefix}: ", " ".join(text.split()))
+    text = " ".join(text.split())
+    if not text:  # an empty value removes the line — what the caller tries first (feedback 2026-09-03)
+        return readme_drop(case, "state", prefix)
+    body = _set_state_line(_readme_text(case, out), f"{prefix}: ", text)
     _write_readme(case, body, out, anchor=True)
     out.say(f"README State: `- {prefix}: …` set (as of the newest journal entry)")
     return out
+
+
+STATE_OWNED = ("progress", "last", "as of")  # lines mike derives on every write — not yours to remove
 
 
 def readme_add(case: Path, section: str, line: str) -> Outcome:
@@ -754,12 +760,30 @@ def readme_add(case: Path, section: str, line: str) -> Outcome:
     return out
 
 
-def readme_drop(case: Path, section: str, k: int) -> Outcome:
+def readme_drop(case: Path, section: str, ref: str) -> Outcome:
+    """Drop line k of a section; in State a line is addressed by its prefix (`mike readme drop
+    state пауза`) — State lines were one-way before (feedback 2026-09-03)."""
     out = Outcome()
     name = SECTION_NAMES.get(section.lower())
     if name is None:
         raise StoreError(f"no section `{section}` — sections: {' · '.join(grammar.README_SECTIONS)}", 2)
     parsed = _readme_sections(case, out)
+    ref = str(ref).strip()
+    if not ref.isdigit():
+        if name != "State":
+            raise StoreError(f"usage: mike readme drop {name.lower()} <k> — a position; only State lines go by prefix", 2)
+        prefix = ref.rstrip(":")
+        if prefix.lower() in STATE_OWNED:
+            raise StoreError(f"`- {prefix}:` is held by mike (derived on every write) — it does not get removed (F3)", 2)
+        at = next((i for i, ln in enumerate(parsed.sections.get("State", [])) if ln.startswith(f"- {prefix}:")), None)
+        if at is None:
+            have = ", ".join(ln[2:].split(":")[0] for ln in parsed.sections.get("State", []) if ln.startswith("- "))
+            raise StoreError(f"no `- {prefix}:` line in State (lines: {have})", 4)
+        removed = parsed.sections["State"].pop(at)
+        _write_readme(case, _render_readme(parsed), out, anchor=True)
+        out.say(f"README State: `- {prefix}: …` removed")
+        return out
+    k = int(ref)
     bullets = [i for i, ln in enumerate(parsed.sections.get(name, [])) if ln.startswith("- ")]
     if not 1 <= k <= len(bullets):
         raise StoreError(f"{name} has {len(bullets)} line(s), nothing at position {k}", 4)
@@ -1367,8 +1391,15 @@ def check(root: Path, only: Optional[Path] = None) -> Outcome:
             rb, _ = stamp.split(readme_text_)
             jr = grammar.parse_journal(store.read(case, "JOURNAL.md"))
             links = grammar.parse_readme(rb).sections.get("Links", [])
-            for ln in order.report(case, _is_project(case), rb, jr if not jr.errors else None, links):
+            dead: list = []
+            for ln in order.report(case, _is_project(case), rb, jr if not jr.errors else None, links, link_violations=dead):
                 out.warn(f"{case.name}: order · {ln}")
+            # a dead link in the files mike holds is a violation, not a warning: the owner clicks and
+            # nothing opens, and `violations: 0` is what gets read (feedback 2026-09-03)
+            for f, t in dead:
+                out.say(f"x {case.name}/{f}: F16 · broken link → {t} — fix the link, or move files with `mike mv old new` (links follow)")
+                log_lines.append(f"{date} {time} · {case.name} · {f} · F16 · broken link → {t}")
+                errors += 1
     if log_lines:
         with (root / "checks.log").open("a", encoding="utf-8") as fh:
             fh.write("\n".join(log_lines) + "\n")
