@@ -14,6 +14,7 @@ when: Order говорит «State is behind» · «file(s) without summary» ·
 | `overdue: N.M «…» was due …` | сделано → `mike todo done N.M`; сдвинулось → `mike todo due N.M <дата>`; больше не нужно → `mike todo cancel N.M "почему"` |
 | `N broken link(s): file → target` | поправить ссылку руками или переносить файлы через `mike mv old new` — ссылки переписываются сами. В README/TODO мёртвая ссылка — нарушение `check` (F16), в документах — только эта строка |
 | `State` держит строку, которая перестала быть правдой | `mike readme set <prefix> ""` или `mike readme drop state <prefix>` — строки `progress:`/`last:`/`as of:` держит mike, их не убрать |
+| `N item(s) without a link to their material` | правило дела F17 включено (строка Context `rule: items link their material`): в текст пункта — `[имя](docs/файл.md)` через `mike todo edit N.M "…"`; не нужно в этом деле — убрать строку Context |
 | `extra file in the case root` | унести в папку по виду (`docs/`, `research/`, `logs/`) |
 | `pending X.recover.md` | внести строки командами mike, потом `rm` |
 

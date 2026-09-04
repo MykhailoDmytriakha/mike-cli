@@ -9,7 +9,7 @@
 ```sh
 git clone https://github.com/MykhailoDmytriakha/mike-cli.git ~/MyProjects/mike-cli   # клон может лежать где угодно
 ln -sf ~/MyProjects/mike-cli/bin/mike ~/.local/bin/mike
-mike --version        # → mike 0.13.0
+mike --version        # → mike 0.14.0
 ```
 
 Обновление на любой машине — `git pull` в клоне: команда, правила и тесты приезжают одним движением, symlink переустанавливать не нужно.
@@ -43,6 +43,7 @@ mike case new "название дела" --goal "цель одной строк
 - Видишь работу со сроком вне текущей фазы → `mike phase plan N "Name" --goal "…"` и `mike todo add N "…"`: фаза стоит в TODO заранее, откроется `mike phase open N`, когда текущая закрыта.
 - У куска работы есть дата → пиши её так, чтобы инструмент видел: `mike todo add N "текст — due: 2026-09-09"`; срок дела → `mike readme set due "2026-09-13 · что"`. На входе `mike` скажет, что сегодня, что просрочено и сколько дней до срока.
 - Пункт больше не нужен → `mike todo cancel N.M "почему"` (не `done`); пункт переехал в другую фазу → `mike todo move N.M K`; переносишь файл → `mike mv old new` — ссылки переписываются сами.
+- Владелец читает только README и TODO → включи правило дела: `mike readme add context "rule: items link their material"`. С ним `todo add` напомнит про ссылку `[имя](docs/файл.md)` в тексте пункта, а `Order` назовёт пункты без неё.
 - Заканчиваешь → снова `mike`: если `Order` говорит «State is behind» — перепиши `State` (`mike readme set next "…"`; устаревшую строку убирает `mike readme set <prefix> ""`). Следующая сессия начнётся с этой строки.
 ```
 

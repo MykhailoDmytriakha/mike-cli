@@ -91,7 +91,11 @@ PROBLEM (problem → root cause → fix) · RESULT (measurement, number, verdict
   On entry `mike` prints `dates: today … · due today · next 7 days · overdue · deadline in N days`;
   an overdue item is an Order line with its three exits: done · due <date> · cancel "why".
 - a live project re-cuts itself often: plan the next phase (`mike phase plan`), move items across
-  phases, cancel what died, move files with `mike mv old new` (links follow the file).""",
+  phases, cancel what died, move files with `mike mv old new` (links follow the file).
+- case rule «items link their material» (the owner reads only README and TODO, the work lives in
+  documents): `mike readme add context "rule: items link their material"`. Then `todo add`/`edit`
+  warn when the text has no `[name](docs/file.md)`, and Order names the open items without one.
+  Opt-in: a coding case rarely needs a document per item.""",
 
     "phases": """phases — `mike phase plan|open|close N "Name"`
 - plan: `mike phase plan 3 "Rollout" --goal "one line"` — names the NEXT phase while the current one

@@ -7,7 +7,7 @@ from . import __version__, commands, knowledge, store
 from .store import StoreError
 
 EXAMPLES = """examples
-  mike                                   where the case in hand stands + next step (read this first)
+  mike  ·  mike status                   where the case in hand stands + next step (read this first)
   mike log DECISION "chose X over Y because Z"
   mike log RESULT "p95 dropped 120 → 48 ms"
   mike todo add 3 "write the parser"      mike todo done 3.1
@@ -101,6 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--apply", action="store_true", help="archive legacy files under legacy/<date-time>/ and write the canonical files")
     sub.add_parser("check", help="verify every case against the rules", allow_abbrev=False)
     sub.add_parser("doctor", help="read-only diagnostics: what mike sees from here; changes nothing", allow_abbrev=False)
+    sub.add_parser("status", help="where the case stands — the same screen as bare `mike` (git/oc/cf habit)", allow_abbrev=False)
     s = sub.add_parser("help", help="examples; `mike help <topic>` opens a knowledge dose", allow_abbrev=False)
     s.add_argument("topic", nargs="?")
     return p
@@ -153,7 +154,7 @@ def run(argv=None) -> int:
             out = commands.check(root, only)
         else:
             case = store.hand(root, args.case)
-            if args.cmd is None:
+            if args.cmd is None or args.cmd == "status":
                 out = commands.entry(root, case)
             elif args.cmd == "log":
                 out = commands.log(case, args.type, args.text, args.phase)
@@ -230,7 +231,7 @@ def run(argv=None) -> int:
             lines.append(f"  recovery: {e.recovery}")
         lines.append(f"  exit {e.code} = {store.EXIT_MEANING.get(e.code, '?')} — `mike help errors`")
         print("\n".join(lines), file=sys.stderr)
-        if args.cmd is None:  # the entry command must explain itself on stdout too (feedback #4)
+        if args.cmd in (None, "status"):  # the entry command must explain itself on stdout too (feedback #4)
             print("\n".join(lines))
             if e.code == 4 and "no `.cases/`" in str(e):
                 print(knowledge.ONBOARDING)

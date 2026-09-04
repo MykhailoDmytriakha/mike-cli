@@ -195,6 +195,53 @@ class StateLines(Base):
         self.assertEqual(run("readme", "drop", "decisions", "пауза")[0], 2, "only State goes by prefix")
 
 
+class ItemsLinkRule(Base):
+    def test_rule_is_opt_in_and_names_blind_items_on_entry_and_at_add_time(self):
+        # feedback 2026-09-03: 20 of 30 items had no link to their material; check and order said nothing
+        run("todo", "add", "1", "call the customer")
+        run("todo", "add", "1", "read [scope](docs/scope.md)")
+        self.doc("docs/scope.md", "# S\nsummary: объём\n")
+        code, out, err = run()
+        self.assertNotIn("without a link", out, "a coding case does not want this: opt-in")
+        code, out, err = run("readme", "add", "context", "rule: items link their material")
+        self.assertEqual(code, 0, err)
+        code, out, err = run()
+        self.assertIn("1 item(s) without a link to their material — 1.1 → mike todo edit N.M", out)
+        code, out, err = run("todo", "add", "1", "book the hall")
+        self.assertEqual(code, 0, err)
+        self.assertIn("1.3 has no link to its material — this case's rule", err)
+        code, out, err = run("todo", "add", "1", "print [plan](docs/plan.md)")
+        self.assertNotIn("no link", err)
+        code, out, err = run("todo", "edit", "1.1", "call the customer — [contacts](docs/contacts.md)")
+        self.assertNotIn("no link", err)
+        run("todo", "done", "1.3")
+        code, out, err = run()
+        self.assertNotIn("without a link", out, "linked and done items do not count")
+
+
+class Aliases(Base):
+    def test_status_is_the_entry_screen(self):
+        run()
+        code, out, err = run("status")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, run()[1])
+
+
+class OwnedLines(Base):
+    def test_a_long_progress_line_rendered_by_mike_does_not_warn(self):
+        # feedback 2026-09-04: 21 phases → a 491-char progress line warned on every command with no fix
+        for n in range(2, 22):
+            run("phase", "plan", str(n), f"Stage Number {n}", "--goal", "g")
+        r = self.read("README.md")
+        progress = next(ln for ln in r.split("\n") if ln.startswith("- progress:"))
+        self.assertGreater(len(progress), 150)
+        code, out, err = run("check")
+        self.assertNotIn("pointer line", err)
+        run("readme", "add", "links", "- " + "o" * 160)
+        code, out, err = run("check")
+        self.assertIn("pointer line is", err, "the agent's own long line still warns")
+
+
 class ReadmeBudget(Base):
     def test_rendered_links_do_not_count_against_the_readme_cap(self):
         # feedback 2026-09-03: the file index mike renders squeezed the owner's own lines out of 8 KB

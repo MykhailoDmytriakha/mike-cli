@@ -22,6 +22,7 @@ EVENT_WARN_CHARS = 180
 EVENT_BODY_LINES = 5
 
 README_SECTIONS = ["Context", "State", "Decisions", "Problems", "Links"]
+STATE_OWNED = ("progress", "last", "as of")  # State lines mike derives on every write (F3)
 JOURNAL_TYPES = {"PHASE", "DECISION", "PROBLEM", "RESULT"}
 
 TITLE_RE = re.compile(r"^# \S.*$")
@@ -304,7 +305,9 @@ def parse_readme(text: str) -> Readme:
             r.error("F1", i, "text before the first section")
             continue
         r.sections[current].append(raw)
-        if raw.startswith("- ") and visible_len(raw.strip()) > README_POINTER_CHARS:
+        owned = current == "State" and raw.startswith(tuple(f"- {p}:" for p in STATE_OWNED))
+        if raw.startswith("- ") and not owned and visible_len(raw.strip()) > README_POINTER_CHARS:
+            # lines mike derives (`progress:` over 21 phases) are not the agent's to shorten (feedback 2026-09-04)
             r.warn("F2", i, f"pointer line is {visible_len(raw.strip())} visible chars, over {README_POINTER_CHARS}")
     # F2 counts the text people write. The nested Links lines (files, sub-folders, `other:`) are
     # rendered by mike from the files and cannot be shortened in README — they are reported, not

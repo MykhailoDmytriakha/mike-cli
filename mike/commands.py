@@ -391,7 +391,20 @@ def todo_add(case: Path, ref: str, text: str) -> Outcome:
     phase.items.append(grammar.Item(phase.n, m, False, text, 0, due=due))
     out.absorb(store.write(case, "TODO.md", render_todo(todo)))
     out.say(f"added: {phase.n}.{m} {text}{f' — due: {due}' if due else ''} → TODO.md")
+    _remind_link(case, f"{phase.n}.{m}", text, out)
     return out
+
+
+def _remind_link(case: Path, ref: str, text: str, out: Outcome):
+    """At the moment of writing, not at the next entry: the rule was forgotten twenty times in one
+    session while every item looked fine on its own line (feedback 2026-09-03)."""
+    try:
+        body = _readme_text(case)
+    except StoreError:
+        return
+    if _items_link_rule(body) and "](" not in text:
+        out.warn(f"{ref} has no link to its material — this case's rule: items link their material; "
+                 f"mike todo edit {ref} \"{text} — [name](docs/file.md)\"")
 
 
 def _find_item(todo: grammar.Todo, ref: str):
@@ -420,6 +433,7 @@ def todo_edit(case: Path, ref: str, text: str) -> Outcome:
         item.due = due
     out.absorb(store.write(case, "TODO.md", render_todo(todo)))
     out.say(f"edited: {ref} → TODO.md (was: «{old_text}»)")
+    _remind_link(case, ref, text, out)
     return out
 
 
@@ -745,7 +759,7 @@ def readme_set(case: Path, prefix: str, text: str) -> Outcome:
     return out
 
 
-STATE_OWNED = ("progress", "last", "as of")  # lines mike derives on every write — not yours to remove
+STATE_OWNED = grammar.STATE_OWNED  # lines mike derives on every write — not yours to remove
 
 
 def readme_add(case: Path, section: str, line: str) -> Outcome:
@@ -1183,6 +1197,28 @@ def _dates_line(todo: grammar.Todo, readme_body: str) -> Optional[str]:
     return "dates: " + " · ".join(parts)
 
 
+RULE_ITEMS_LINK_RE = re.compile(r"^- rule: items link", re.M)
+RULE_ITEMS_LINK = 'rule: items link their material'
+
+
+def _items_link_rule(readme_body: str) -> bool:
+    """The case rule «every item links the material it needs» — a Context line
+    `- rule: items link their material`. Opt-in: a coding case rarely needs a document per item, a
+    coordination case always does, and only the case can say which it is (feedback 2026-09-03)."""
+    return RULE_ITEMS_LINK_RE.search(readme_body) is not None
+
+
+def _blind_items(todo: grammar.Todo, readme_body: str) -> List[str]:
+    if not _items_link_rule(readme_body):
+        return []
+    blind = [it for p in todo.phases if not p.done for it in p.items if not it.done and "](" not in it.text]
+    if not blind:
+        return []
+    shown = ", ".join(f"{it.n}.{it.m}" for it in blind[:6]) + (f" … +{len(blind) - 6}" if len(blind) > 6 else "")
+    return [f"{len(blind)} item(s) without a link to their material — {shown} → mike todo edit N.M \"text — [name](docs/file.md)\" "
+            f"(this case's rule: items link their material)"]
+
+
 def _overdue_lines(todo: grammar.Todo, readme_body: str) -> List[str]:
     overdue = _dated(todo, readme_body, dt.date.today())[0]
     return [f"overdue: {it.n}.{it.m} «{it.text}» was due {d.isoformat()} → mike todo done {it.n}.{it.m} · "
@@ -1224,7 +1260,9 @@ def _order_lines(case: Path, root: Path, readme_body: str, journal: Optional[gra
     links = parsed.sections.get("Links", []) if not parsed.errors else []
     lines = order.report(case, _is_project(case), readme_body, journal, links)
     try:
-        lines.extend(_overdue_lines(store.todo_of(case), readme_body))  # a date that passed is out of order
+        todo_now = store.todo_of(case)
+        lines.extend(_overdue_lines(todo_now, readme_body))  # a date that passed is out of order
+        lines.extend(_blind_items(todo_now, readme_body))    # an item with nowhere to go (case rule)
     except StoreError:
         pass
     legacy = store.legacy_files(case)
