@@ -9,7 +9,7 @@
 ```sh
 git clone https://github.com/MykhailoDmytriakha/mike-cli.git ~/MyProjects/mike-cli   # клон может лежать где угодно
 ln -sf ~/MyProjects/mike-cli/bin/mike ~/.local/bin/mike
-mike --version        # → mike 0.14.0
+mike --version        # → mike 0.17.0
 ```
 
 Обновление на любой машине — `git pull` в клоне: команда, правила и тесты приезжают одним движением, symlink переустанавливать не нужно.
@@ -39,11 +39,14 @@ mike case new "название дела" --goal "цель одной строк
 - Новый файл в `docs/`, `research/`, … начинай строкой `summary: <одна фраза>` под заголовком — карта в README соберётся из этих строк сама; папке дай строку `mike readme add links "docs/ — что здесь"`.
 - Решил что-то важное → `mike log DECISION "что · вместо чего · почему"`; получил результат → `mike log RESULT "…"`.
 - Решил проблему → сразу `mike log PROBLEM "проблема → корень → решение"` и рецепт-файл в `.howto/` (первая строка `when: <слова ошибки>`). Упёрся → сначала `grep -ril "<слова ошибки>" .howto/`.
-- Закрыл кусок → `mike todo done N.M`; фазу → `mike phase close N "итог"`; дело → `mike done "итог"`.
+- Закрыл кусок → `mike todo done N.M "что вышло"` (это уйдёт в журнал); фазу → `mike phase close N "итог"` — все её пункты должны быть сделаны или сняты; дело → `mike done "итог"`. Ветка не нужна → `mike phase cancel N "почему"` / `mike case cancel "почему"`.
+- Пункт зависит от другого → `mike todo add N "текст — after: N.M"` или `mike todo after N.M "N.K, имя-дела"`: на входе `mike` скажет, что можно брать сейчас (`unblocked:`), а что заблокировано.
 - Видишь работу со сроком вне текущей фазы → `mike phase plan N "Name" --goal "…"` и `mike todo add N "…"`: фаза стоит в TODO заранее, откроется `mike phase open N`, когда текущая закрыта.
 - У куска работы есть дата → пиши её так, чтобы инструмент видел: `mike todo add N "текст — due: 2026-09-09"`; срок дела → `mike readme set due "2026-09-13 · что"`. На входе `mike` скажет, что сегодня, что просрочено и сколько дней до срока.
 - Пункт больше не нужен → `mike todo cancel N.M "почему"` (не `done`); пункт переехал в другую фазу → `mike todo move N.M K`; переносишь файл → `mike mv old new` — ссылки переписываются сами.
 - Владелец читает только README и TODO → включи правило дела: `mike readme add context "rule: items link their material"`. С ним `todo add` напомнит про ссылку `[имя](docs/файл.md)` в тексте пункта, а `Order` назовёт пункты без неё.
+- Не знаешь причину, работа больше одной сессии или нужно решение владельца → `mike spawn "имя" --goal "…"`: вложенное дело той же формы; закрыл его → `mike done "итог"`, родитель получит строку сам.
+- Проверить всё: `mike check` (нарушения → выход 3); что видит mike отсюда: `mike doctor`; как всё устроено целиком: `mike help model`; mike ведёт себя не так → `mike feedback "заголовок" --actual "…" --expected "…"`.
 - Заканчиваешь → снова `mike`: если `Order` говорит «State is behind» — перепиши `State` (`mike readme set next "…"`; устаревшую строку убирает `mike readme set <prefix> ""`). Следующая сессия начнётся с этой строки.
 ```
 

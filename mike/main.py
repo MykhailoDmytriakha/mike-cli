@@ -10,10 +10,12 @@ EXAMPLES = """examples
   mike  ·  mike status                   where the case in hand stands + next step (read this first)
   mike log DECISION "chose X over Y because Z"
   mike log RESULT "p95 dropped 120 → 48 ms"
-  mike todo add 3 "write the parser"      mike todo done 3.1
+  mike todo add 3 "write the parser"      mike todo done 3.1 "parser passes 12 tests"   done = what came out (→ RESULT)
   mike todo edit 3.1 "new text" · mike todo move 3.7 3.2 (before 3.2; or `last`) · mike todo drop 3.4   numbers never change
   mike todo add 3 "send the material — due: 2026-09-09" · mike todo due 3.2 2026-09-12 · mike todo cancel 3.5 "no longer needed"
   mike todo move 3.6 4                    to another phase (joins its end under the next free number)
+  mike todo add 3 "ship it — after: 3.1, 3.2" · mike todo after 3.4 "3.1, 3.2" · mike todo after 3.4 none   dependencies (→ unblocked: on entry)
+  mike phase cancel 4 "the venue fell through" · mike case cancel "merged into the other case"   the second honest end of a branch
   mike readme set due "2026-09-13 · decision meeting"   the case deadline — `mike` counts the days on entry
   mike mv docs/old.md docs/notes/new.md   move a file; every link to it is rewritten (README/TODO/JOURNAL and the documents)
   mike todo hold 3.2 "ждём ответа заказчика" · mike todo resume 3.2
@@ -22,6 +24,7 @@ EXAMPLES = """examples
   mike phase plan 4 "Rollout" --goal "first users on the new build"   name the NEXT phase now, park items under it (todo add 4), open it later
   mike log DECISION "reflect: …"  ·  mike log DECISION "align: …"   (both before closing)
   mike phase close 3 "parsers, stamp and commands work, 55 tests"
+  mike readme add decisions "2026-09-05 · X over Y — why" · mike readme drop decisions 2 · mike readme drop state пауза
   mike readme --file README.md           validate and write a README (progress line kept in sync)
   mike case new "connect database" --goal "app talks to the prod database"
   mike case new --root "my app" --goal "…"   root mode: the project folder itself is the top case
@@ -37,6 +40,8 @@ EXAMPLES = """examples
   mike check                             all cases against the rules; violations → exit 3
   mike doctor                            read-only diagnostics, changes nothing
   mike --case connect-database check     check one case only
+  mike help model                        how it all fits: nodes, rendered lines, edges, two ends, what is refused vs shown
+  mike help <topic>                      topics are listed at the bottom of this help
 options: --case <name or suffix> (or MIKE_CASE) picks the case; exit codes 0 ok · 1 error · 2 usage · 3 rule violation · 4 precondition
 """
 
@@ -54,14 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--phase", help="p1, 1 or a unique phase name (default: the open phase); e.g. `mike log --phase p1 DECISION \"…\"`")
 
     s = sub.add_parser("todo", help="add · done · edit · move · drop · hold · resume items — N.M is an item's number for life: drop and move never renumber", allow_abbrev=False)
-    s.add_argument("action", choices=["add", "done", "edit", "move", "drop", "hold", "resume", "cancel", "due"])
+    s.add_argument("action", choices=["add", "done", "edit", "move", "drop", "hold", "resume", "cancel", "due", "after"])
     s.add_argument("ref", help="phase number for add (N), item for the rest (N.M)")
-    s.add_argument("text", nargs="?", default="", help="text for add/edit (may end with `— due: YYYY-MM-DD`); for move: N.K (before K), `last`, or a phase number K; for cancel: why; for due: YYYY-MM-DD or none")
+    s.add_argument("text", nargs="?", default="", help="text for add/edit (may end with `— due: YYYY-MM-DD`); for move: N.K (before K), `last`, or a phase number K; for done: what came out; for cancel: why; for due: YYYY-MM-DD or none; for after: \"N.M, N.K, case\" or none")
 
     s = sub.add_parser("phase", help="plan · open · close a phase (plan = name the next one without opening it; close needs RESULT, reflect:, align:)", allow_abbrev=False)
-    s.add_argument("action", choices=["plan", "open", "close"])
+    s.add_argument("action", choices=["plan", "open", "close", "cancel"])
     s.add_argument("n", type=int)
-    s.add_argument("text", nargs="?", default="", help="name for plan/open (open takes it from the plan when omitted), summary for close")
+    s.add_argument("text", nargs="?", default="", help="name for plan/open (open takes it from the plan when omitted), summary for close, why for cancel")
     s.add_argument("--goal", help="one line; required for a new phase unless it was planned with one")
 
     s = sub.add_parser("readme", help="write from --file/stdin · set <prefix> \"…\" (\"\" removes) · add <section> \"…\" · drop <section> <k> | drop state <prefix>", allow_abbrev=False)
@@ -71,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--file", default="-")
 
     s = sub.add_parser("case", help="case new <name> --goal … · case list · case use <name> · case new --root", allow_abbrev=False)
-    s.add_argument("action", choices=["new", "list", "use"])
+    s.add_argument("action", choices=["new", "list", "use", "cancel"])
     s.add_argument("name", nargs="?")
     s.add_argument("--goal")
     s.add_argument("--root", action="store_true", help="root mode: the project folder itself becomes the top case")
@@ -145,6 +150,8 @@ def run(argv=None) -> int:
         if args.cmd == "case":
             if args.action == "list":
                 out = commands.case_list(root)
+            elif args.action == "cancel":
+                out = commands.case_cancel(root, store.hand(root, args.case), args.name or "")
             else:
                 if not args.name:
                     raise StoreError("usage: mike case use <name or unique suffix>", 2)
@@ -162,7 +169,7 @@ def run(argv=None) -> int:
                 if args.action == "add":
                     out = commands.todo_add(case, args.ref, args.text)
                 elif args.action == "done":
-                    out = commands.todo_done(case, args.ref)
+                    out = commands.todo_done(case, args.ref, args.text)
                 elif args.action == "edit":
                     if not args.text:
                         raise StoreError("usage: mike todo edit N.M \"new text\"", 2)
@@ -179,6 +186,8 @@ def run(argv=None) -> int:
                     out = commands.todo_cancel(case, args.ref, args.text)
                 elif args.action == "due":
                     out = commands.todo_due(case, args.ref, args.text)
+                elif args.action == "after":
+                    out = commands.todo_after(case, args.ref, args.text)
                 else:
                     out = commands.todo_drop(case, args.ref)
             elif args.cmd == "phase":
@@ -188,6 +197,8 @@ def run(argv=None) -> int:
                     if not args.text:
                         raise StoreError("phase plan needs a name: `mike phase plan 3 \"Rollout\" --goal \"one line\"`", 2)
                     out = commands.phase_plan(case, args.n, args.text, args.goal)
+                elif args.action == "cancel":
+                    out = commands.phase_cancel(case, args.n, args.text)
                 else:
                     if not args.text:
                         raise StoreError("phase close needs a summary: `mike phase close 3 \"what it delivered\"`", 2)

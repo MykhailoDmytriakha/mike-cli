@@ -58,7 +58,7 @@ class Dates(Base):
         self.assertIn(f"deadline {in10} «decision meeting» in 10 days", out)
         self.assertIn(f"overdue: 1.2 «call back» was due {yesterday} → mike todo done 1.2 · mike todo due 1.2 <date> · "
                       f"mike todo cancel 1.2 \"why\"", out)
-        run("todo", "done", "1.2")
+        run("todo", "done", "1.2", "ok")
         self.assertNotIn("overdue", run()[1], "a done item stops counting")
         run("todo", "due", "1.1", "none")
         self.assertIn("  - [ ] 1.1 send the material\n", self.read("TODO.md"))
@@ -144,6 +144,20 @@ class Mv(Base):
         self.assertEqual(code, 0, err + out)  # the three files went through the stamp door
         self.assertNotIn("broken link", run()[1])
 
+    def test_links_inside_code_are_examples_not_links(self):
+        # dogfooding 2026-09-04: a concept document quoting `[name](path)` counted as three dead links
+        self.doc("docs/rules.md", "# R\nsummary: правила\nссылка вида `[имя](путь)` и блок:\n```\n[x](docs/old.md)\n```\nа вот [настоящая](old.md)\n")
+        self.doc("docs/old.md", "# Old\nsummary: s\n")
+        run("readme", "add", "links", "docs/ — документы")
+        code, out, err = run()
+        self.assertNotIn("broken link", out)
+        code, out, err = run("mv", "docs/old.md", "docs/moved.md")
+        self.assertEqual(code, 0, err)
+        r = (self.case / "docs/rules.md").read_text(encoding="utf-8")
+        self.assertIn("`[имя](путь)`", r)
+        self.assertIn("[x](docs/old.md)", r, "an example inside a code block is left alone")
+        self.assertIn("[настоящая](moved.md)", r)
+
     def test_mv_refuses_the_three_files_overwrites_and_the_outside(self):
         self.doc("docs/a.md", "# A\nsummary: a\n")
         self.doc("docs/b.md", "# B\nsummary: b\n")
@@ -214,7 +228,7 @@ class ItemsLinkRule(Base):
         self.assertNotIn("no link", err)
         code, out, err = run("todo", "edit", "1.1", "call the customer — [contacts](docs/contacts.md)")
         self.assertNotIn("no link", err)
-        run("todo", "done", "1.3")
+        run("todo", "done", "1.3", "ok")
         code, out, err = run()
         self.assertNotIn("without a link", out, "linked and done items do not count")
 

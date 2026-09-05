@@ -1,3 +1,3 @@
 """mike — the single write door for `.cases/` (see .cases/RULES.md)."""
 
-__version__ = "0.14.0"
+__version__ = "0.17.0"

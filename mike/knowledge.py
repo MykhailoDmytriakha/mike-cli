@@ -10,17 +10,40 @@ ONBOARDING = """start here — no `.cases/` from this folder upwards
 then: `mike` shows where the case stands · `mike help start` — how a day goes · `mike help where` — what goes where"""
 
 TOPICS = {
+    "model": """the model — work is a graph the tool can check (F18–F21; concept of 2026-09-04)
+- one node shape at three sizes: case · phase · item. Each has a statement (Context / `goal:` /
+  the item text), a status the tool computes, evidence when done, and edges to other nodes.
+- the collapsed line: what a node looks like at its parent is RENDERED from the node's own
+  header, never typed — a file's line from `summary:`, a phase line from `goal:` or `result:`
+  (plus the path to its file), a nested case's line from its README (progress · next · closed).
+  Links, `progress:`, `last:`, `as of:` and the `cases:` block are mike's: edit the source, not the line.
+- edges: uses = `[name](path)` in an item, phase file or decision (a bare `docs/x.md` counts too) ·
+  after = `— after: N.M, case` (F19) · child = nested case, phase file · evidence = `done` → RESULT.
+- two ends for every node (F20): done with what came out, or cancelled with a reason —
+  `mike todo cancel` · `mike phase cancel` · `mike case cancel`. A parent closes only when every
+  child ended: an open item holds its phase, an open phase holds its case, a BROKEN child its parent.
+- computed on entry: `dates:` (due today · overdue · deadline), `unblocked:` (open items whose
+  blockers are done), and the Order block — what is out of place plus the command that fixes it.
+  Nothing in the work points at a file → it is named (F21): link it, park it in archive/, delete it.
+- refused (exit 3/4): grammar and stamps, dead links in README/TODO, dependency cycles, dropping
+  what others wait for, closing over open children, done without an outcome. Shown, never
+  refused: summaries, duplicates, budgets, unreferenced files, blind items. The tool checks
+  structure; the owner checks truth.""",
+
     "start": """a day with mike
-1. `mike` — prints the case in hand: README (the "now"), TODO (phases), journal headlines, and the
-   `## Order` block: what is out of order and the command that fixes each line. Read this, nothing
-   else; first say in your own words where the case stands and what the next step is — then go.
+1. `mike` (or `mike status`) — prints the case in hand: README (the "now"), TODO (phases), journal
+   headlines, `dates:` and `unblocked:` when the case has dates or dependencies, and the `## Order`
+   block: what is out of order and the command that fixes each line. Read this, nothing else; first
+   say in your own words where the case stands and what the next step is — then go. How the whole
+   thing fits together: `mike help model`.
 2. Work as usual. When something is worth remembering — `mike log <TYPE> "…"`.
 3. Every new file in docs/ research/ … starts with `summary: <one line>` right under its title —
    README Links is rendered from those lines, so the map never rots (F14).
 4. Stuck? First search the knowledge base: grep -ril "<error words>" .howto/ — maybe it is solved.
    Solved a problem yourself → `mike log PROBLEM "problem → root cause → fix"` AND write a recipe
    file into .howto/ (first line `when: <error words>`).
-5. Finished a piece → `mike todo done N.M`; a phase → `mike help phases`; the case → `mike done "…"`.
+5. Finished a piece → `mike todo done N.M "what came out"`; not needed after all → `mike todo cancel N.M "why"`;
+   a phase → `mike help phases`; the case → `mike done "…"`.
 6. Before you stop: `mike` again — if Order says "State is behind", rewrite State
    (`mike readme set next "…"` or `mike readme --file`). The next session starts from that line.
 7. Never edit README.md / TODO.md / JOURNAL.md by hand — mike is the only write door; hand edits
@@ -38,6 +61,10 @@ Every `mike` entry ends with `## Order`: each line = one thing out of place + th
 - a file over 24 KB of markdown → split by summary or trim. There is no folder total: a byte
   count cannot tell deliverables from water.
 - State is behind → RESULT/PHASE events were logged after `as of` → rewrite State.
+- a file nothing in the work points at (F21) → link it from an item, a phase file or a decision
+  (RESULT/DECISION evidence counts, the rendered index and plain journal chatter do not), park it
+  in archive/ (`mike mv`), or delete it. Shown, never deleted by mike.
+- an item after something gone (cancelled or dropped) → `mike todo after N.M <refs|none>` or cancel it.
 Nothing here is refused (mike does not write those files); it is shown on every entry until fixed.
 Why: a limit on README alone pushed the water one layer down — new files were cheap, merging never
 happened. Now the lower layer is visible from the top, and the top is rendered from it.""",
@@ -62,8 +89,10 @@ happened. Now the lower layer is visible from the top, and the top is rendered f
   Recipes are NOT per-case: they go to the project-root .howto/.
 - README State carries lines mike owns: `progress:` (from TODO), `last:` (newest RESULT),
   `as of:` (the journal entry State was last rewritten against, S5). Yours: next, ждёт, due …
-  — `mike readme set <prefix> "…"` sets one, `mike readme set <prefix> ""` (or `readme drop state
+  — `mike readme set <prefix> "…"` sets one, `mike readme set <prefix> ""` (or `mike readme drop state
   <prefix>`) removes it once it stops being true; a stale State line is a lie the owner reads.
+  Other sections: `mike readme add <section> "line"` · `mike readme drop <section> <k>` (k-th bullet) ·
+  `mike readme --file README.md` rewrites the whole file (rare; mike re-renders what it owns).
 - Exactly five sections (F1): a topic of your project (a budget, a roster) is a State line
   (`- budget: …`), or a file with `summary:` — its line lands in Links by itself.""",
 
@@ -79,10 +108,20 @@ PROBLEM (problem → root cause → fix) · RESULT (measurement, number, verdict
 - Long text is split automatically into a headline + body lines; keep headlines meaningful.""",
 
     "todo": """todo items — `mike todo <action> N.M …`
-- add N "text" · done N.M · edit N.M "text" · drop N.M · hold N.M "why" / resume N.M.
-- numbers are for life: drop, hold and move never renumber; a new item takes the next free number,
-  gaps are normal. `move N.M N.K` puts the item before N.K, `move N.M last` — last; `move N.M K`
-  (a bare phase number) sends it to the end of phase K under a new number there.
+- `mike todo add N "text"` · `mike todo done N.M "what came out"` · `mike todo edit N.M "text"` ·
+  `mike todo drop N.M` · `mike todo hold N.M "why"` / `mike todo resume N.M` · `mike todo cancel N.M "why"` ·
+  `mike todo due N.M YYYY-MM-DD` · `mike todo after N.M "N.K, case"` · `mike todo move N.M N.K|last|K`.
+- done needs what came out (F20): it lands in the journal as `RESULT · N.M: …` — a link to the
+  artifact is the norm. Nothing came out? Then it was not done: `cancel N.M "why"`.
+- numbers are for life: drop, hold and move never renumber; a new item takes the next free number
+  above everything still referred to (an `after`, a journal line), gaps are normal. `move N.M N.K`
+  puts the item before N.K, `move N.M last` — last; `move N.M K` (a bare phase number) sends it to
+  the end of phase K under a new number there, and every `after` pointing at it is rewritten.
+- dependencies (F19): end the text with `— after: N.M, N.K, case-name` or `mike todo after N.M "…"`
+  (`none` clears). Targets must exist, no cycles; an item others wait for cannot be dropped, only
+  cancelled — its dependents are then shown as blocked by something gone, with two exits. On entry
+  `unblocked:` lists open items whose blockers are all done (by due date, then position) and
+  `blocked:` the rest — candidates, not the owner's `next:`.
 - cancel N.M "why" — the item stopped being needed: it leaves TODO and the reason goes to the
   journal as `DECISION · снято …`. Not `done` (that would say it was completed), not `drop`
   (that says nothing).
@@ -107,8 +146,11 @@ PROBLEM (problem → root cause → fix) · RESULT (measurement, number, verdict
 - while it runs: items live in TODO (`mike todo add 2 "…"`, `mike todo done 2.1`), the story lives
   in the phase file. TODO holds WHAT, the phase file holds HOW and WHY.
 - close: needs in the journal — a RESULT for pN, `DECISION · reflect: <lesson about the process>`
-  and `DECISION · align: <next phase re-planned with what we now know>`. Then
-  `mike phase close 2 "what it delivered"` fills result:, collapses TODO, updates README State.
+  and `DECISION · align: <next phase re-planned with what we now know>` — and every item of the
+  phase ended: done with an outcome or cancelled with a reason (F20; an open item holds the phase
+  open). Then `mike phase close 2 "what it delivered"` fills result:, collapses TODO, updates State.
+- cancel: `mike phase cancel 2 "why"` — the branch is not needed: its items are cancelled with it,
+  the file says `result: снято: …`, TODO keeps one line marked «снято», progress shows ✗.
 - the next phase will not open until the previous one passed all of the above.""",
 
     "cases": """cases — units of work longer than a session
@@ -119,7 +161,11 @@ PROBLEM (problem → root cause → fix) · RESULT (measurement, number, verdict
   longer than a session → `mike spawn "name" --goal "…"` — a nested case of the same shape inside
   the parent. The parent shows one `waits:` line; `mike done "outcome"` in the child writes one
   summary line back and returns the hand.
-- `mike done "outcome"` closes the case (all phases must be closed first).
+- `mike done "outcome"` closes the case (all phases and nested cases must be closed first);
+  `mike case cancel "why"` ends it the other honest way — open phases collapse with the reason.
+- the parent's Links carries a `cases:` block rendered from each child's own README (progress ·
+  next; closed ones as a count plus the latest few) — never typed by hand (F18); a child whose
+  README mike cannot parse shows as BROKEN and holds the parent open.
 - Root mode: `mike case new --root "my app" --goal "…"` makes the PROJECT FOLDER itself the top
   case (README/TODO/JOURNAL in the project root; refused if a README.md already exists there).
   Feature cases live in .cases/ as usual and report their outcome back to the project on `done`.""",

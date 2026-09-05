@@ -32,6 +32,7 @@ BODY_RE = re.compile(r"^    (.+)$")
 PHASE_LINE_RE = re.compile(r"^- \[( |x)\] (\d+) (.+?)(?: — (.+))?$")
 PHASE_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*(?: [A-Za-z0-9-]+){0,2}$")  # F13: English, 1–3 words
 ITEM_RE = re.compile(r"^  - \[( |x|~)\] (\d+)\.(\d+) (.+)$")  # `~` = on hold
+AFTER_REF_RE = re.compile(r"\d+\.\d+|[A-Za-z0-9][\w-]*")  # F19: an item N.M or a nested case name
 LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 
 
@@ -183,6 +184,7 @@ class Item:
     held: bool = False
     hold_reason: str = ""
     due: str = ""        # YYYY-MM-DD from the `— due: …` suffix; the tool counts dates it can parse
+    after: List[str] = field(default_factory=list)  # F19: `— after: N.M, case` — what must end first
 
 
 @dataclass
@@ -256,13 +258,20 @@ def parse_todo(text: str) -> Todo:
                 due = due.strip()
                 if not DATE_RE.fullmatch(due):
                     r.error("F4", i, f"item {n}.{k}: `due:` must be YYYY-MM-DD, got `{due}`")
+            after: List[str] = []
+            if " — after: " in txt:
+                txt, refs = txt.rsplit(" — after: ", 1)
+                after = [x.strip() for x in refs.split(",") if x.strip()]
+                for ref in after:
+                    if not AFTER_REF_RE.fullmatch(ref):
+                        r.error("F19", i, f"item {n}.{k}: `after:` expects N.M or a case name, got `{ref}`")
             if n != phase.n:
                 r.error("F4", i, f"item {n}.{k} listed under phase {phase.n}")
             if visible_len(txt) > TODO_ITEM_CHARS:
                 r.error("F13", i, f"item {n}.{k} text is {visible_len(txt)} visible chars, limit {TODO_ITEM_CHARS}")
             if phase.done:
                 r.error("F5", i, f"closed phase {phase.n} still lists items — they belong in the phase file")
-            phase.items.append(Item(n, k, mark == "x", txt, i, held, reason, due))
+            phase.items.append(Item(n, k, mark == "x", txt, i, held, reason, due, after))
             continue
         m = WAITS_RE.match(raw)
         if m:

@@ -44,6 +44,21 @@ STATE_ANCHOR_RE = re.compile(r"^- as of: (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?: ·
 PLACEHOLDER_FOLDER = "(describe this folder:"
 PLACEHOLDER_FILE = "summary: missing"
 LINK_RE = re.compile(r"(\]\()([^)\s]+)(\))")  # a markdown link target
+CODE_RE = re.compile(r"```.*?```|`[^`\n]*`", re.S)  # fenced blocks and inline code: examples, not links
+
+
+def outside_code(text: str):
+    """(segment, is_code) pieces of a markdown text — a link written inside code is an example
+    (`[name](path)` in a rule or a help text) and is neither checked nor rewritten."""
+    out, at = [], 0
+    for m in CODE_RE.finditer(text):
+        if m.start() > at:
+            out.append((text[at:m.start()], False))
+        out.append((m.group(0), True))
+        at = m.end()
+    if at < len(text):
+        out.append((text[at:], False))
+    return out
 
 
 @dataclass
@@ -155,6 +170,76 @@ def phases_folder(case: Path) -> Optional[Folder]:
     return folder
 
 
+# ---- nested cases: the parent's line is rendered from the child's own header (F18) ---------------
+CASES_DIR = ".cases"
+CASE_STATE_RE = re.compile(r"^- (progress|next|closed): (.*)$")
+CASE_LINE_RE = re.compile(r"^- (?:closed: )?\[[^\]]+\]\(([^)]+)/README\.md\)")
+CASES_SHOWN_CLOSED = 5
+
+
+def child_cases(case: Path, root_mode: bool) -> List[Path]:
+    """Direct nested cases: under `.cases/` for the project case, inside the folder for a normal one."""
+    base = case / CASES_DIR if root_mode else case
+    if not base.is_dir():
+        return []
+    return sorted(d for d in base.iterdir() if _is_case_dir(d))
+
+
+def child_status(child: Path) -> Tuple[str, str, str, str]:
+    """('open' | 'closed' | 'broken', progress, next, closed) read from the child's own README —
+    the child describes itself; a README mike cannot parse makes the child BROKEN, and a broken
+    child holds its parent open (F18)."""
+    from . import store, stamp  # local: store imports order for the README render
+    try:
+        body, _ = stamp.split(store.read(child, "README.md"))
+    except Exception:  # noqa: BLE001 — missing or unreadable README = broken, never silent
+        return ("broken", "", "", "")
+    parsed = grammar.parse_readme(body)
+    if parsed.errors:
+        return ("broken", "", "", "")
+    state: Dict[str, str] = {}
+    for ln in parsed.sections.get("State", []):
+        m = CASE_STATE_RE.match(ln)
+        if m:
+            state[m.group(1)] = m.group(2).strip()
+    if state.get("closed"):
+        return ("closed", state.get("progress", ""), "", state["closed"])
+    return ("open", state.get("progress", ""), state.get("next", ""), "")
+
+
+def _render_cases(case: Path, root_mode: bool) -> List[str]:
+    """The cases block of Links: open children one line each (progress · next), closed ones as a
+    count plus the latest few — a root with hundreds of closed cases must not drown its README."""
+    kids = child_cases(case, root_mode)
+    if not kids:
+        return []
+    prefix = f"{CASES_DIR}/" if root_mode else ""
+    rows = [(k, child_status(k)) for k in kids]
+    live = [(k, s) for k, s in rows if s[0] != "closed"]
+    closed = sorted(((k, s) for k, s in rows if s[0] == "closed"), key=lambda ks: ks[1][3], reverse=True)
+    out = [f"- cases: {len(live)} open · {len(closed)} closed — every case: mike case list"]
+    for k, s in live:
+        link = f"[{k.name}]({prefix}{k.name}/README.md)"
+        if s[0] == "broken":
+            out.append(f"  - {link} — BROKEN: README unparsable, holds this case open → mike --case {k.name} check")
+        else:
+            desc = s[1] + (f" · next: {s[2]}" if s[2] else "")
+            out.append(f"  - {link} — {_short(desc or '(no State yet)', SUMMARY_CHARS)}")
+    for k, s in closed[:CASES_SHOWN_CLOSED]:
+        out.append(f"  - closed: [{k.name}]({prefix}{k.name}/README.md) — {_short(s[3], SUMMARY_CHARS)}")
+    if len(closed) > CASES_SHOWN_CLOSED:
+        out.append(f"  - … +{len(closed) - CASES_SHOWN_CLOSED} closed earlier — mike case list")
+    return out
+
+
+def _is_cases_line(stripped: str, case: Path, root_mode: bool) -> bool:
+    """A line of the rendered cases block — re-rendered every time, never kept as manual."""
+    if stripped.startswith("- cases: ") or stripped.startswith("- … +"):
+        return True
+    m = CASE_LINE_RE.match(stripped)
+    return bool(m) and _is_case_dir(case / m.group(1))
+
+
 # ---- README Links rendering (F3: folder and file lines come from the files themselves) -----------
 def _pointer_target(line: str) -> Optional[str]:
     for m in POINTER_RE.finditer(line):
@@ -206,6 +291,8 @@ def render_links(case: Path, root_mode: bool, manual_lines: List[str]) -> Tuple[
     fallback_raw: Dict[str, str] = {}
     for raw in manual_lines:
         stripped = raw.lstrip()
+        if _is_cases_line(stripped, case, root_mode):
+            continue  # the cases block is rendered from the children's READMEs (F18)
         kind, a, b = _classify(stripped if stripped.startswith("- ") else raw, case)  # nested lines: by content, any depth
         if kind == "folder" and ((a.split("/")[0] in SKIP_DIRS and a != "phases") or a.startswith(".")):
             manual.append(raw)  # a folder mike does not render (legacy/, scripts/ …): the agent's line stays as written
@@ -241,7 +328,7 @@ def render_links(case: Path, root_mode: bool, manual_lines: List[str]) -> Tuple[
         _render_folder(f, 1, folder_desc, fallback, rendered, blocks)
     # a line the agent wrote for a file mike does not render here (outside the content folders) is
     # never dropped: it stays among the manual lines — `line added` must stay true (feedback 2026-09-03)
-    out = manual + [raw for rel, raw in fallback_raw.items() if rel not in rendered] + blocks
+    out = manual + [raw for rel, raw in fallback_raw.items() if rel not in rendered] + blocks + _render_cases(case, root_mode)
     return out, {rel: desc for rel, desc in fallback.items() if rel in rendered}
 
 
@@ -381,6 +468,7 @@ def broken_links(case: Path, folders: List[Folder], readme_body: str, todo_body:
     out: List[Tuple[str, str]] = []
 
     def scan(rel: str, text: str, base: Path):
+        text = "".join(seg if not code else " " * len(seg) for seg, code in outside_code(text))
         for m in LINK_RE.finditer(text):
             target = m.group(2)
             if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith("#"):
@@ -399,6 +487,85 @@ def broken_links(case: Path, folders: List[Folder], readme_body: str, todo_body:
         except OSError:
             continue
     return out
+
+
+# ---- unreferenced: nothing in the work points at it (F21) -----------------------------------------
+UNREF_SKIP = {"archive", "legacy"}
+
+
+BARE_MD_RE = re.compile(r"(?<![\w/(])((?:[\w.-]+/)+[\w.-]+\.md)\b")
+
+
+def _link_targets(text: str, base: Path, case: Optional[Path] = None) -> List[Path]:
+    """Resolved targets `text` points at: markdown links (relative to the file), plus bare paths to
+    `.md` files (`research/survey.md`, also in backticks) — that is how agents and closed phase lines
+    cite files, and a citation is a reference. Fenced code blocks are examples, not references."""
+    out = []
+    text = "".join(seg if not (code and seg.startswith("```")) else " " * len(seg) for seg, code in outside_code(text))
+    for m in LINK_RE.finditer(text):
+        target = m.group(2)
+        if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith("#"):
+            continue
+        path = target.partition("#")[0]
+        if path:
+            out.append((base / path).resolve())
+    for m in BARE_MD_RE.finditer(text):
+        out.append((base / m.group(1)).resolve())
+        if case is not None:
+            out.append((case / m.group(1)).resolve())  # bare paths are case-relative by convention
+    return out
+
+
+def unreferenced(case: Path, folders: List[Folder], readme_body: str, todo_body: str,
+                 journal: Optional[grammar.Journal]) -> List[str]:
+    """Documents nothing in the work points at (F21). Roots: the hand-written README lines (the
+    rendered Links lines are the index, not a reference), the TODO, the phase files, and the
+    RESULT/DECISION events of the journal (evidence keeps its material alive — a Codex finding).
+    Live = reachable from the roots through links, transitively through documents. `archive/` and
+    `legacy/` are never named: parking is the agent's honest answer to "nothing uses this"."""
+    docs = {}
+    for f in folders:
+        if f.name.split("/")[0] in UNREF_SKIP:
+            continue
+        for d in f.all_docs():
+            if d.rel.split("/")[0] in UNREF_SKIP or "/archive/" in f"/{d.rel}":
+                continue
+            docs[d.path.resolve()] = d
+    if not docs:
+        return []
+    roots: List[Tuple[str, Path]] = []
+    manual_readme = "\n".join(ln for ln in readme_body.split("\n") if not ln.startswith("  ") and not ln.startswith("- cases: "))
+    roots.append((manual_readme, case))
+    roots.append((todo_body, case))
+    ph = phases_folder(case)
+    if ph:
+        for d in ph.docs:
+            try:
+                roots.append((d.path.read_text(encoding="utf-8", errors="ignore"), d.path.parent))
+            except OSError:
+                continue
+    if journal is not None:
+        evidence = "\n".join(ev.text + "\n" + "\n".join(ev.body) for e in journal.entries for ev in e.events
+                             if ev.type in ("RESULT", "DECISION"))
+        roots.append((evidence, case))
+    live: set = set()
+    frontier: List[Path] = []
+    for text, base in roots:
+        for t in _link_targets(text, base, case):
+            if t in docs and t not in live:
+                live.add(t)
+                frontier.append(t)
+    while frontier:  # a document that is alive keeps alive what it links to
+        p = frontier.pop()
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for t in _link_targets(text, p.parent, case):
+            if t in docs and t not in live:
+                live.add(t)
+                frontier.append(t)
+    return [d.rel for p, d in sorted(docs.items(), key=lambda kv: kv[1].rel) if p not in live]
 
 
 # ---- the report shown on every entry (P12) ------------------------------------------------------
@@ -435,6 +602,9 @@ def report(case: Path, root_mode: bool, readme_body: str, journal: Optional[gram
         desc = described.get(f.name, "")
         if not desc or desc.startswith(PLACEHOLDER_FOLDER):
             out.append(f"folder {f.name}/ has no description → mike readme add links \"{f.name}/ — что здесь\"")
+    for k in child_cases(case, root_mode):
+        if child_status(k)[0] == "broken":
+            out.append(f"nested case {k.name}: README unparsable — it holds this case open (F18) → mike --case {k.name} check")
     for small, other, share in duplicates(folders):
         out.append(f"{small} ≈ {other}: {int(share * 100)} % of {small.rsplit('/', 1)[-1]}'s text is verbatim in "
                    f"{other.rsplit('/', 1)[-1]} → say the difference in each summary, or merge")
@@ -444,6 +614,11 @@ def report(case: Path, root_mode: bool, readme_body: str, journal: Optional[gram
         todo_body = stamp.split(store.read(case, "TODO.md"))[0]
     except Exception:  # noqa: BLE001 — no TODO, no links to check there
         todo_body = ""
+    dead = unreferenced(case, folders, readme_body, todo_body, journal)
+    if dead:
+        shown = ", ".join(dead[:4]) + (f" … +{len(dead) - 4}" if len(dead) > 4 else "")
+        out.append(f"{len(dead)} file(s) nothing in the work points at — {shown} → link it from an item, a phase file or a "
+                   f"decision · park it: mike mv <file> archive/ · or delete it (F21)")
     broken = broken_links(case, folders, readme_body, todo_body)
     if link_violations is not None:
         link_violations.extend((f, t) for f, t in broken if f in ("README.md", "TODO.md"))

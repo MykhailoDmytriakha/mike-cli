@@ -59,10 +59,10 @@ class Flow(unittest.TestCase):
         # items
         self.assertEqual(run("todo", "add", "1", "install the driver")[0], 0)
         self.assertEqual(run("todo", "add", "1", "run the smoke test")[0], 0)
-        self.assertEqual(run("todo", "done", "1.1")[0], 0)
-        code, out, _ = run("todo", "done", "1.1")
+        self.assertEqual(run("todo", "done", "1.1", "ok")[0], 0)
+        code, out, _ = run("todo", "done", "1.1", "ok")
         self.assertIn("already done", out)
-        self.assertEqual(run("todo", "done", "9.9")[0], 4)
+        self.assertEqual(run("todo", "done", "9.9", "ok")[0], 4)
 
         # journal
         code, out, err = run("log", "DECISION", "psycopg over asyncpg because the app is sync")
@@ -84,6 +84,10 @@ class Flow(unittest.TestCase):
         run("log", "RESULT", "local connection works, 12 ms round trip")
         run("log", "DECISION", "reflect: read the driver docs before guessing flags")
         run("log", "DECISION", "align: phase 2 is the server database, not the app")
+        code, out, err = run("phase", "close", "1", "local connection works")
+        self.assertEqual(code, 4, "F20: an open item holds the phase open")
+        self.assertIn("open items 1.2", err)
+        run("todo", "cancel", "1.2", "smoke test is not needed locally")  # the second honest end
         code, out, err = run("phase", "close", "1", "local connection works")
         self.assertEqual(code, 0, err)
         todo = grammar.parse_todo((case / "TODO.md").read_text())

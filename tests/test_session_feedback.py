@@ -183,7 +183,7 @@ class HoldResume(Base):
     def test_done_clears_hold(self):
         run("todo", "add", "1", "пункт")
         run("todo", "hold", "1.1", "")
-        code, out, err = run("todo", "done", "1.1")
+        code, out, err = run("todo", "done", "1.1", "ok")
         self.assertEqual(code, 0, err)
         self.assertIn("- [x] 1.1 пункт", (self.case / "TODO.md").read_text())
 

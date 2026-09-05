@@ -15,6 +15,9 @@ when: Order говорит «State is behind» · «file(s) without summary» ·
 | `N broken link(s): file → target` | поправить ссылку руками или переносить файлы через `mike mv old new` — ссылки переписываются сами. В README/TODO мёртвая ссылка — нарушение `check` (F16), в документах — только эта строка |
 | `State` держит строку, которая перестала быть правдой | `mike readme set <prefix> ""` или `mike readme drop state <prefix>` — строки `progress:`/`last:`/`as of:` держит mike, их не убрать |
 | `N item(s) without a link to their material` | правило дела F17 включено (строка Context `rule: items link their material`): в текст пункта — `[имя](docs/файл.md)` через `mike todo edit N.M "…"`; не нужно в этом деле — убрать строку Context |
+| `N.M is after N.K, which is gone` | зависимость снята или удалена: перевязать `mike todo after N.M "…"` (или `none`) — либо снять сам пункт `mike todo cancel N.M "почему"` |
+| `nested case X: README unparsable` | ребёнок сломан и держит родителя открытым (F18): `mike --case X check`, починить через `mike migrate` или команды |
+| `cannot close phase N: open items …` (отказ) | у каждого пункта два конца (F20): `mike todo done N.M "что вышло"` или `mike todo cancel N.M "почему"`; вся фаза не нужна — `mike phase cancel N "почему"` |
 | `extra file in the case root` | унести в папку по виду (`docs/`, `research/`, `logs/`) |
 | `pending X.recover.md` | внести строки командами mike, потом `rm` |
 

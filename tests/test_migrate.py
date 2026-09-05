@@ -155,7 +155,7 @@ class LegacyCase(unittest.TestCase):
         self.assertEqual(code, 0, err)
         code, out, err = run("todo", "add", "3", "re-run with SDK 2.4")
         self.assertEqual(code, 0, err)
-        code, out, err = run("todo", "done", "3.2")
+        code, out, err = run("todo", "done", "3.2", "ok")
         self.assertEqual(code, 0, err)
         code, out, err = run("check")
         self.assertEqual(code, 0, err + out)

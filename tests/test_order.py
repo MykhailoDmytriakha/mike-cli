@@ -232,11 +232,11 @@ class Entry(Base):
     def test_rules_pointer_in_the_footer_resolves(self):
         # feedback 2026-09-03: `case new` ships no RULES.md, so a project must not be sent to a dead path
         code, out, err = run()
-        self.assertIn("rules: mike help files · order · limits", out)
+        self.assertIn("rules: mike help model · files · order · limits", out)
         self.assertNotIn(".cases/RULES.md", out)
         (Path(self.tmp.name) / ".cases" / "RULES.md").write_text("# RULES\n", encoding="utf-8")
         code, out, err = run()
-        self.assertIn("rules: .cases/RULES.md · mike help files · order · limits", out)
+        self.assertIn("rules: .cases/RULES.md · mike help model · files · order · limits", out)
 
     def test_no_cases_prints_onboarding(self):
         with tempfile.TemporaryDirectory() as empty:
@@ -285,7 +285,7 @@ class RootMode(unittest.TestCase):
             self.assertNotIn("src/", r, "source folders are not case content")
             self.assertNotIn("src/notes.md", out)
             self.assertNotIn(".cases/RULES.md", out, "root mode: .cases/ is empty, the pointer must not name it")
-            self.assertIn("rules: mike help files · order · limits", out)
+            self.assertIn("rules: mike help model · files · order · limits", out)
             # a line the agent wrote for a file mike does not render must survive every render
             run("readme", "add", "links", "[notes.md](src/notes.md) — заметки к коду")
             run()
